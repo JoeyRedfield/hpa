@@ -32,5 +32,6 @@ Lab 1 原文举例要求接南大 `smail` 邮箱和 `ehall` 办事大厅，我�
 ## 现在到哪了
 
 - ✅ intent（本文件）
-- 🚧 spec：[.scratch/growing-assistant/spec.md](.scratch/growing-assistant/spec.md)
-- ⬜ 里程碑拆解与实现
+- ✅ spec：[.scratch/growing-assistant/spec.md](.scratch/growing-assistant/spec.md)
+- ✅ M1 个人数据库：`hpa index` 增量索引 680 篇（P0 651 / P1 28 / P2 1，约 2.6s）；`hpa ask` 中文检索并给 `文件:行号` 定位；P1/P2 在 SQL 层被 `purpose=prompt` 挡在模型之外。设计见 [ADR 0001](docs/adr/0001-sqlite-fts5-trigram.md)。
+- ⬜ M2 邮件接入（QQ IMAP）→ M3 草稿确认闸门 → M4 成长闭环 → M5 组合与归档

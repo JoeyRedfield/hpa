@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# hpa 命令行包装脚本。
+#
+# 项目不安装成 editable 包（pyproject 里 dependencies 为空、没有构建后端），
+# 所以这里显式把 src/ 放进 PYTHONPATH，再用专门为 FTS5 重建的 .venv。
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
+  echo "缺少 .venv：先运行" >&2
+  echo "  UV_CACHE_DIR=$ROOT/.uv-cache uv venv --python /opt/homebrew/bin/python3 $ROOT/.venv" >&2
+  exit 1
+fi
+
+exec env PYTHONPATH="$ROOT/src" "$ROOT/.venv/bin/python" -m hpa "$@"

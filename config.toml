@@ -1,0 +1,11 @@
+# 非敏感配置。密钥一律放 `~/.config/hpa/secrets.env`，不放这里。
+
+[vault]
+path = "~/Documents/notes"
+
+[mail]
+poll_seconds = 300
+
+[llm]
+provider = "deepseek"
+model = "deepseek-chat"

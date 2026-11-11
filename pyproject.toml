@@ -1,0 +1,10 @@
+[project]
+name = "hpa"
+version = "0.1.0"
+description = "会成长的个人助手（NJU GSE Lab 1 等值实现）"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
