@@ -90,7 +90,9 @@ caffeinate -i ./scripts/start-foreground.sh   # 终端里后台起 daemon + web�
 ./scripts/phone-access.sh 8787                # tailscale serve，并打印带 token 的手机 URL
 ```
 
-页面在本机是 `http://127.0.0.1:8787/`，首次要带 `?token=…`（token 在 `state/web-token` 或
+页面顶部的「暂停自动处理」会让 daemon 停止拉新邮件和自动起草（手动确认、改稿、刷新照常），
+状态条会显示 `⏸ 已暂停`；「恢复自动处理」后继续。待办每条左边有圆圈，点一下即标记完成并
+从列表消失，`bin/hpa todos open <id>` 可以撤回。页面在本机是 `http://127.0.0.1:8787/`，首次要带 `?token=…`（token 在 `state/web-token` 或
 `~/.config/hpa/secrets.env` 的 `HPA_WEB_TOKEN`），之后写 Cookie。`phone-access.sh` 用
 `tailscale serve` 把页面暴露到 tailnet（只对你自己的设备可见），第一次需要按它打印的链接去
 Tailscale 后台一次性启用 Serve/HTTPS，再重跑。若确实要 launchd 常驻：把仓库和笔记库移出

@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS todos (
     deadline   TEXT,
     status     TEXT NOT NULL DEFAULT 'open',
     created_at TEXT NOT NULL,
+    done_at    TEXT,
     FOREIGN KEY (message_id) REFERENCES messages(message_id)
 );
 
@@ -95,6 +96,9 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "applied_at": "TEXT",
         "target": "TEXT",
         "summary": "TEXT",
+    },
+    "todos": {
+        "done_at": "TEXT",
     },
 }
 
@@ -163,3 +167,30 @@ def insert_message(conn: sqlite3.Connection, msg) -> bool:
 
 def count_messages(conn: sqlite3.Connection) -> int:
     return conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+
+
+def is_paused(conn: sqlite3.Connection) -> bool:
+    """手机端「暂停自动处理」：只影响 daemon，手动操作照常。"""
+    return get_meta(conn, "paused") == "1"
+
+
+def set_paused(conn: sqlite3.Connection, paused: bool) -> None:
+    set_meta(conn, "paused", "1" if paused else "0")
+
+
+def complete_todo(conn: sqlite3.Connection, todo_id: int) -> bool:
+    cur = conn.execute(
+        "UPDATE todos SET status = 'done', done_at = ? WHERE id = ? AND status = 'open'",
+        (utcnow(), todo_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def reopen_todo(conn: sqlite3.Connection, todo_id: int) -> bool:
+    cur = conn.execute(
+        "UPDATE todos SET status = 'open', done_at = NULL WHERE id = ? AND status = 'done'",
+        (todo_id,),
+    )
+    conn.commit()
+    return cur.rowcount > 0

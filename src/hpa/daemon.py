@@ -32,6 +32,7 @@ class TickResult:
     classified: int = 0
     extracted: int = 0
     drafted: int = 0
+    paused: bool = False
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -65,6 +66,15 @@ def tick(
     push_url: str = "",
 ) -> TickResult:
     result = TickResult(at=store.utcnow())
+
+    conn = store.connect(cfg)
+    try:
+        paused = store.is_paused(conn)
+    finally:
+        conn.close()
+    if paused:
+        result.paused = True
+        return result
 
     if mailbox is not None:
         try:
@@ -144,8 +154,11 @@ def run(
     while True:
         ticks += 1
         result = tick(cfg, mailbox=mailbox, llm=llm, folder=folder, push_url=push_url)
-        print(f"[{result.at}] 同步 {result.synced} / 规则命中 {result.triaged_matched}"
-              f" / 分诊 {result.classified} / 草稿 {result.drafted}")
+        if result.paused:
+            print(f"[{result.at}] ⏸ 已暂停（手机端恢复后继续）")
+        else:
+            print(f"[{result.at}] 同步 {result.synced} / 规则命中 {result.triaged_matched}"
+                  f" / 分诊 {result.classified} / 草稿 {result.drafted}")
         for err in result.errors:
             print(f"   ⚠️ {err}", file=sys.stderr)
         if once or (max_ticks is not None and ticks >= max_ticks):

@@ -16,6 +16,10 @@
 <header>
   <h1>个人助手</h1>
   <div id="statusbar" class="statusbar">载入中…</div>
+  <div class="controls">
+    <button id="pause" class="secondary">暂停自动处理</button>
+    <span id="paused-hint" class="muted" hidden>⏸ 已暂停：不再自动拉邮件 / 起草；手动刷新和确认仍可用</span>
+  </div>
 </header>
 
 <main>
@@ -28,6 +32,7 @@
 
   <section>
     <h2>待办 <span id="todo-count" class="pill">0</span></h2>
+    <p class="hint">点左边的圆圈标记完成；做完了它会从这里消失，`bin/hpa todos open <id>` 可以撤回。</p>
     <div id="todos"></div>
     <div id="todos-empty" class="empty" hidden>没有未完成的待办。</div>
   </section>

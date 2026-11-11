@@ -233,6 +233,47 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_pause(args: argparse.Namespace) -> int:
+    cfg = Config.load(Path(args.config) if args.config else None)
+    conn = store.connect(cfg)
+    try:
+        store.set_paused(conn, not args.resume)
+        paused = store.is_paused(conn)
+    finally:
+        conn.close()
+    print("⏸ 已暂停自动处理（手动命令仍可用）" if paused else "▶ 已恢复自动处理")
+    return 0
+
+
+def _cmd_todos(args: argparse.Namespace) -> int:
+    cfg = Config.load(Path(args.config) if args.config else None)
+    conn = store.connect(cfg)
+    try:
+        if args.action == "list":
+            rows = conn.execute(
+                "SELECT id, title, deadline, status FROM todos "
+                "WHERE status = 'open' ORDER BY deadline IS NULL, deadline, id DESC"
+            ).fetchall()
+            if not rows:
+                print("没有未完成的待办。")
+                return 0
+            for row in rows:
+                due = f"（截止 {row['deadline']}）" if row["deadline"] else ""
+                print(f"   #{row['id']} {row['title']}{due}")
+            print("完成：bin/hpa todos done <id>；重新打开：bin/hpa todos open <id>")
+            return 0
+        todo_id = int(args.id)
+        if args.action == "done":
+            ok = store.complete_todo(conn, todo_id)
+            print(f"✅ 已完成待办 #{todo_id}" if ok else f"❌ 待办 #{todo_id} 不存在或已完成")
+        else:
+            ok = store.reopen_todo(conn, todo_id)
+            print(f"✅ 已重新打开待办 #{todo_id}" if ok else f"❌ 待办 #{todo_id} 不存在或未完成")
+        return 0 if ok else 2
+    finally:
+        conn.close()
+
+
 def _cmd_growth_check(args: argparse.Namespace) -> int:
     cfg = Config.load(Path(args.config) if args.config else None)
     try:
@@ -337,6 +378,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_export.add_argument("--message-id", help="只导出一封（默认导出所有已发送的）")
     p_export.add_argument("-n", "--limit", type=int, default=20, help="条数，默认 20")
     p_export.set_defaults(func=_cmd_export)
+
+    p_pause = sub.add_parser("pause", help="暂停 daemon 自动处理（手动命令不受影响）")
+    p_pause.set_defaults(func=_cmd_pause, resume=False)
+    p_resume = sub.add_parser("resume", help="恢复 daemon 自动处理")
+    p_resume.set_defaults(func=_cmd_pause, resume=True)
+
+    p_todos = sub.add_parser("todos", help="查看和处理待办")
+    todos_sub = p_todos.add_subparsers(dest="action", required=True)
+    p_t_list = todos_sub.add_parser("list", help="列出未完成待办")
+    p_t_list.set_defaults(func=_cmd_todos, id=None)
+    for name, help_text in (("done", "标记完成"), ("open", "重新打开")):
+        p_t = todos_sub.add_parser(name, help=help_text)
+        p_t.add_argument("id")
+        p_t.set_defaults(func=_cmd_todos)
 
     p_daemon = sub.add_parser("daemon", help="常驻循环：同步 → 规则分诊 → 模型流水线")
     p_daemon.add_argument("--interval", type=int, default=300, help="轮询间隔秒数，默认 300")

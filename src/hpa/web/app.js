@@ -25,6 +25,7 @@ async function api(path, body) {
 
 let editing = false;
 let timer = null;
+let paused = false;
 
 function fmtTime(ts) {
   if (!ts) return "从未";
@@ -39,7 +40,14 @@ function renderStatus(st) {
     `<span>待确认 ${c.drafts_pending ?? 0}</span>` +
     `<span>已发 ${c.sent ?? 0}</span>` +
     `<span>上次同步 ${esc(fmtTime(st.last_sync))}</span>` +
-    `<span>上次索引 ${esc(fmtTime(st.last_index))}</span>`;
+    `<span>上次索引 ${esc(fmtTime(st.last_index))}</span>` +
+    (st.paused ? `<span class="paused-pill">⏸ 已暂停</span>` : "");
+  paused = !!st.paused;
+  const btn = $("#pause");
+  btn.textContent = paused ? "恢复自动处理" : "暂停自动处理";
+  btn.classList.toggle("primary", paused);
+  btn.classList.toggle("secondary", !paused);
+  $("#paused-hint").hidden = !paused;
 }
 
 function renderDrafts(drafts) {
@@ -131,12 +139,29 @@ function renderDrafts(drafts) {
 function renderTodos(todos) {
   $("#todo-count").textContent = todos.length;
   $("#todos-empty").hidden = todos.length > 0;
-  $("#todos").innerHTML = todos
+  const box = $("#todos");
+  box.innerHTML = todos
     .map(
-      (t) => `<div class="todo"><div class="title">${esc(t.title)}</div>` +
+      (t) => `<div class="todo" data-id="${t.id}">` +
+        `<button class="check" data-act="done" aria-label="标记完成" title="标记完成">✓</button>` +
+        `<div class="title">${esc(t.title)}</div>` +
         `<div class="deadline">${esc(t.deadline || "")}</div></div>`
     )
     .join("");
+  box.querySelectorAll("button[data-act=done]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.closest(".todo").dataset.id;
+      btn.disabled = true;
+      try {
+        await api(`/api/todos/${id}/done`, {});
+        toast("已完成");
+      } catch (e) {
+        toast(String(e.message || e), 5000);
+      } finally {
+        await loadState();
+      }
+    });
+  });
 }
 
 function renderCorrections(rows) {
@@ -175,6 +200,17 @@ function schedule() {
 }
 
 $("#refresh").addEventListener("click", loadState);
+$("#pause").addEventListener("click", async () => {
+  const next = !paused;
+  if (next && !window.confirm("暂停后 daemon 不再拉新邮件、也不再自动起草；已排队的草稿仍可确认。确定暂停？")) return;
+  try {
+    const r = await api("/api/pause", { paused: next });
+    toast(r.paused ? "已暂停自动处理" : "已恢复自动处理");
+  } catch (e) {
+    toast(String(e.message || e), 5000);
+  }
+  await loadState();
+});
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") loadState();
 });

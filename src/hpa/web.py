@@ -99,6 +99,7 @@ def state_payload(cfg: Config) -> dict:
             "sent": conn.execute("SELECT COUNT(*) FROM drafts WHERE status = 'sent'").fetchone()[0],
         }
         last_sync = store.get_meta(conn, "last_sync_at")
+        paused = store.is_paused(conn)
     finally:
         conn.close()
     try:
@@ -110,6 +111,7 @@ def state_payload(cfg: Config) -> dict:
             "counts": counts,
             "last_sync": last_sync,
             "last_index": last_index,
+            "paused": paused,
         },
         "drafts": drafts,
         "todos": todos,
@@ -292,6 +294,32 @@ class Handler(BaseHTTPRequestHandler):
                 finally:
                     conn.close()
                 return {"status": "recorded", "id": cur.lastrowid}
+        # /api/pause  暂停/恢复 daemon 自动处理（手动操作不受影响）
+        if path == "/api/pause":
+            paused = bool(payload.get("paused", True))
+            conn = store.connect(cfg)
+            try:
+                store.set_paused(conn, paused)
+            finally:
+                conn.close()
+            return {"status": "paused" if paused else "running", "paused": paused}
+        # /api/todos/<id>/done|open
+        if len(parts) == 4 and parts[:2] == ["api", "todos"]:
+            todo_id = int(parts[2])
+            action = parts[3]
+            conn = store.connect(cfg)
+            try:
+                if action == "done":
+                    ok = store.complete_todo(conn, todo_id)
+                elif action == "open":
+                    ok = store.reopen_todo(conn, todo_id)
+                else:
+                    raise ValueError(f"未知待办操作：{action}")
+            finally:
+                conn.close()
+            if not ok:
+                raise ValueError(f"待办 {todo_id} 不存在或状态没变化")
+            return {"status": "done" if action == "done" else "open", "id": todo_id}
         if path == "/api/sync":
             from . import mail
 
