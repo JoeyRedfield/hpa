@@ -65,3 +65,16 @@ HPA_WEB_TOKEN=自己定一个长随机串
 ```
 
 手机访问：`http://<Mac 的 Tailscale IP>:8787/?token=<HPA_WEB_TOKEN>`（首次带 token，之后写 Cookie）。
+
+### 让它常开 + 手机访问
+
+```bash
+./scripts/install-daemon.sh install   # launchd 常驻：开机自启、挂了自动拉起
+./scripts/install-daemon.sh status    # 看是否在跑
+./scripts/phone-access.sh 8787        # tailscale serve，并打印带 token 的手机 URL
+```
+
+`phone-access.sh` 用 `tailscale serve` 把本机 8787 暴露到 tailnet（只对你自己的设备可见），
+打印形如 `https://your-machine.your-tailnet.ts.net/?token=...` 的地址，手机浏览器打开后
+「添加到主屏幕」即为 PWA。token 在 `~/.config/hpa/secrets.env` 的 `HPA_WEB_TOKEN`，
+没配则用自动生成的 `state/web-token`。
