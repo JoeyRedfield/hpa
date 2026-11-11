@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
 
-from . import growth, kb, mail, pipeline, rules, store, triage, web
+from . import daemon, export, growth, kb, mail, pipeline, rules, store, triage, web
 from .config import Config
 from .llm import LLMError, from_config as llm_from_config
 
@@ -202,6 +203,36 @@ def _cmd_growth_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_export(args: argparse.Namespace) -> int:
+    cfg = Config.load(Path(args.config) if args.config else None)
+    if args.message_id:
+        try:
+            paths = [export.export_message(cfg, args.message_id)]
+        except KeyError:
+            print(f"❌ 找不到邮件：{args.message_id}", file=sys.stderr)
+            return 2
+    else:
+        paths = export.export_sent(cfg, limit=args.limit)
+    if not paths:
+        print("没有已发送的邮件可导出（先确认发送一封，再跑 export）。")
+        return 0
+    print(f"导出 {len(paths)} 篇到 outbox/（移动端不写笔记库，请手动搬进 vault）：")
+    for path in paths:
+        print(f"   · {path.relative_to(cfg.project_root)}")
+    return 0
+
+
+def _cmd_daemon(args: argparse.Namespace) -> int:
+    cfg = Config.load(Path(args.config) if args.config else None)
+    daemon.run(
+        cfg,
+        interval=args.interval,
+        once=args.once,
+        push_url=os.environ.get(daemon.PUSH_ENV, ""),
+    )
+    return 0
+
+
 def _cmd_growth_check(args: argparse.Namespace) -> int:
     cfg = Config.load(Path(args.config) if args.config else None)
     try:
@@ -295,6 +326,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_g_check = growth_sub.add_parser("check", help="跑回归样例：规则是否还符合纠正")
     p_g_check.set_defaults(func=_cmd_growth_check)
+
+    p_export = sub.add_parser("export", help="把已发送的邮件导出成 Markdown 到 outbox/")
+    p_export.add_argument("--message-id", help="只导出一封（默认导出所有已发送的）")
+    p_export.add_argument("-n", "--limit", type=int, default=20, help="条数，默认 20")
+    p_export.set_defaults(func=_cmd_export)
+
+    p_daemon = sub.add_parser("daemon", help="常驻循环：同步 → 规则分诊 → 模型流水线")
+    p_daemon.add_argument("--interval", type=int, default=300, help="轮询间隔秒数，默认 300")
+    p_daemon.add_argument("--once", action="store_true", help="只跑一轮就退出（调试用）")
+    p_daemon.set_defaults(func=_cmd_daemon)
 
     return parser
 

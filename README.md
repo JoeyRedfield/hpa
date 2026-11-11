@@ -38,7 +38,7 @@ Lab 1 原文举例要求接南大 `smail` 邮箱和 `ehall` 办事大厅，我�
 - ✅ M3a 流水线（未发送）：`hpa process` = 模型分诊 → 抽取待办 → 检索 P0 笔记 → 起草带 `[引用]` 的回复，草稿状态 `proposed` 进队列；全程幂等，`--dry-run` 只走一遍不写库。LLM 走 DeepSeek（OpenAI 兼容），provider 已抽象。
 - ✅ M3b 确认闸门：`hpa web` 起手机端一页（PWA，绑定 `127.0.0.1:8787`，手机经 Tailscale 访问）；草稿可在手机上改（改一次 = 新版本，须重新确认）、驳回、记录纠正；**只有点「确认发送」才走 SMTP**。发送状态机 `proposed → sending → sent`，失败退回 `proposed` 并显示原因；崩溃在 `sending` 不自动重发，由人核对后收尾。
 - ✅ M4 成长闭环：手机上记一条纠正 → `hpa growth run` 让模型把它改写成 `rules/mail-triage.md` 的一条规则、`rules/reply-style.md` 的写作要求、或 `memory/preferences.md` 的一条记忆；新规则先过 DSL 语法校验（写坏就回滚），可判定的同时生成 `tests/cases/*.md` 回归样例，`hpa growth check` 随时验证。改动只写本仓库、带「来源：纠正 #N」注释，用 `git diff` 审完再提交——**新会话重新加载规则即生效**。
-- ⬜ M5 组合与归档
+- ✅ M5 组合与归档：`hpa daemon` 每 5 分钟一轮「同步 → 规则分诊 → 模型流水线」，单轮失败只记日志不杀循环，模型/邮箱凭据缺失时自动降级；配 `HPA_PUSH_URL` 可在有新事时 POST 一条消息到手机（不配也能在手机页看到，页面 20s 自刷新）。`hpa export` 把已发送的邮件连同原文、待办、最终稿、引用、纠正记录导出成带 frontmatter 的 Markdown 到 `outbox/`，由我手动搬进笔记库（保持 vault 只读）。至此走通一条完整流程：**邮件进来 → 待办+草稿 → 手机确认发送 → 导出归档**。
 
 ## 跑起来（当前形态）
 
@@ -51,6 +51,8 @@ Lab 1 原文举例要求接南大 `smail` 邮箱和 `ehall` 办事大厅，我�
 ./bin/hpa growth list                # 看有哪些纠正还没固化
 ./bin/hpa growth run                 # 纠正 → 规则/记忆 + 回归样例（写进 git）
 ./bin/hpa growth check               # 跑回归样例，确认老规则没被写坏
+./bin/hpa export                     # 已发送邮件 → outbox/*.md（手动搬进笔记库）
+./bin/hpa daemon                     # 常驻：每 5 分钟同步+分诊+起草（--once 单轮调试）
 ```
 
 凭据放 `~/.config/hpa/secrets.env`（不进 git）：
