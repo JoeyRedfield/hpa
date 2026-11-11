@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+uv.lock.tmp
+.pytest_cache/
+.ruff_cache/
+
+# 运行期状态与机密（不入库：邮件游标、登录态、token）
+state/
+.env
+.env.*
+*.session.json
+*.log
+
+# 个人资料库默认不入库，避免误推到公开仓库
+# memory/
