@@ -51,6 +51,8 @@ Lab 1 原文举例要求接南大 `smail` 邮箱和 `ehall` 办事大厅，我�
 | 能力组合：共享上下文、跨工具、一条愿意反复用的流程 | 一条完整链路：邮件 → 待办 → 检索笔记库 → 引用原文起草 → 确认发送 → 导出归档 | `tests/test_export_daemon.py`（端到端） |
 | 成功流程与纠正沉淀，Git 管理，新会话复用 | `hpa growth`：纠正 → 规则/记忆 + 回归样例；改动只写仓库、可 `git diff` 审 | `src/hpa/growth.py`、ADR 0002 |
 
+实机跑通记录（真实 QQ 邮箱 + DeepSeek，2026-11-11）见 [docs/demo.md](docs/demo.md)。
+
 ## 跑起来（当前形态）
 
 ```bash
