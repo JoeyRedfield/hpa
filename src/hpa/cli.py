@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import kb, mail, pipeline, rules, store, triage, web
+from . import growth, kb, mail, pipeline, rules, store, triage, web
 from .config import Config
 from .llm import LLMError, from_config as llm_from_config
 
@@ -170,6 +170,60 @@ def _cmd_web(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_growth_list(args: argparse.Namespace) -> int:
+    cfg = Config.load(Path(args.config) if args.config else None)
+    pending = growth.list_pending(cfg, limit=args.limit)
+    if not pending:
+        print("没有待固化的纠正。在手机端记录纠正后会出现在这里。")
+        return 0
+    print(f"待固化纠正 {len(pending)} 条：")
+    for item in pending:
+        print(f"   #{item['id']} {item['created_at']} {item['raw']}")
+    print("运行 bin/hpa growth run 让模型改写成规则/记忆。")
+    return 0
+
+
+def _cmd_growth_run(args: argparse.Namespace) -> int:
+    cfg = Config.load(Path(args.config) if args.config else None)
+    try:
+        llm = llm_from_config(cfg)
+    except LLMError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        return 2
+    res = growth.run(cfg, llm, limit=args.limit, dry_run=args.dry_run)
+    verb = "预演" if args.dry_run else "固化"
+    print(f"{verb}：待处理 {res.pending} / 成功 {res.applied} / 跳过 {res.skipped}")
+    for item in res.applied_items:
+        print(f"   · {item}")
+    for err in res.errors:
+        print(f"   ⚠️ {err}", file=sys.stderr)
+    if res.applied and not args.dry_run:
+        print("改动已落到 rules/ memory/ tests/cases/，请用 git diff 审阅后再提交。")
+    return 0
+
+
+def _cmd_growth_check(args: argparse.Namespace) -> int:
+    cfg = Config.load(Path(args.config) if args.config else None)
+    try:
+        rules.load_rules(cfg)
+    except rules.RuleSyntaxError as exc:
+        print(f"❌ 规则文件语法错误：{exc}", file=sys.stderr)
+        return 2
+    results = growth.check(cfg)
+    if not results:
+        print("还没有回归样例（tests/cases/ 为空）。")
+        return 0
+    failed = [r for r in results if not r["ok"]]
+    for item in results:
+        mark = "✅" if item["ok"] else "❌"
+        print(f"{mark} {item['path']}：期望 {item['expected']}，实际 {item['actual']}")
+    if failed:
+        print(f"❌ {len(failed)} 条回归样例失败", file=sys.stderr)
+        return 1
+    print(f"✅ {len(results)} 条回归样例全部通过")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hpa", description="会成长的个人助手")
     parser.add_argument("--config", help="config.toml 路径（默认仓库根）")
@@ -226,6 +280,21 @@ def build_parser() -> argparse.ArgumentParser:
     rules_sub = p_rules.add_subparsers(dest="rules_cmd", required=True)
     p_check = rules_sub.add_parser("check", help="解析 rules/mail-triage.md")
     p_check.set_defaults(func=_cmd_rules_check)
+
+    p_growth = sub.add_parser("growth", help="成长循环：纠正 → 规则/记忆 + 回归样例")
+    growth_sub = p_growth.add_subparsers(dest="growth_cmd", required=True)
+
+    p_g_list = growth_sub.add_parser("list", help="列出待固化的纠正")
+    p_g_list.add_argument("-n", "--limit", type=int, default=20, help="条数，默认 20")
+    p_g_list.set_defaults(func=_cmd_growth_list)
+
+    p_g_run = growth_sub.add_parser("run", help="让模型把纠正改写成规则/记忆并写入仓库")
+    p_g_run.add_argument("-n", "--limit", type=int, default=10, help="单次处理上限，默认 10")
+    p_g_run.add_argument("--dry-run", action="store_true", help="只看提案，不写文件")
+    p_g_run.set_defaults(func=_cmd_growth_run)
+
+    p_g_check = growth_sub.add_parser("check", help="跑回归样例：规则是否还符合纠正")
+    p_g_check.set_defaults(func=_cmd_growth_check)
 
     return parser
 

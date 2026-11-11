@@ -63,7 +63,11 @@ CREATE TABLE IF NOT EXISTS corrections (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,
     message_id TEXT,
-    raw        TEXT NOT NULL
+    raw        TEXT NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'pending',
+    applied_at TEXT,
+    target     TEXT,
+    summary    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS meta (
@@ -85,6 +89,12 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "subject": "TEXT NOT NULL DEFAULT ''",
         "citations": "TEXT NOT NULL DEFAULT '[]'",
         "last_error": "TEXT",
+    },
+    "corrections": {
+        "status": "TEXT NOT NULL DEFAULT 'pending'",
+        "applied_at": "TEXT",
+        "target": "TEXT",
+        "summary": "TEXT",
     },
 }
 

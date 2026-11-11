@@ -96,8 +96,13 @@ def process_pending(
         "extract": llm_mod.load_prompt(cfg, "mail-extract.md"),
         "draft": llm_mod.load_prompt(cfg, "draft-reply.md"),
     }
-    style_path = cfg.project_root / "rules" / "reply-style.md"
-    style = style_path.read_text(encoding="utf-8") if style_path.exists() else ""
+    style_paths = [
+        cfg.project_root / "rules" / "reply-style.md",
+        cfg.project_root / "memory" / "preferences.md",
+    ]
+    style = "\n\n".join(
+        path.read_text(encoding="utf-8") for path in style_paths if path.exists()
+    )
 
     conn = store.connect(cfg)
     try:
