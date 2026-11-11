@@ -85,6 +85,19 @@ $ ./bin/hpa export --message-id '<tencent_…>'
 文件带 frontmatter（message_id / 发件人 / 分诊）、原文、待办、最终稿、引用、纠正记录；
 `outbox/` 在 `.gitignore` 里，由用户手动搬进笔记库。
 
+### 真实确认发送（2026-11-11 21:18 / 23:51）
+
+页面上点「确认发送」后状态库记录：
+
+```json
+{"id":1,"version":1,"status":"sent","confirmed_at":"2026-11-11T13:18:09+00:00","sent_at":"2026-11-11T13:18:10+00:00"}
+{"id":3,"version":2,"status":"sent","confirmed_at":"2026-11-11T15:50:39+00:00","sent_at":"2026-11-11T15:51:10+00:00"}
+```
+
+即 `proposed → sending → sent` 两阶段真实走通（`last_error` 为空），随后
+`hpa export` 正常导出成 `outbox/2026-11-11-Re-某项目接口文档-45e4ca.md`
+（含「## 回复（v2 · sent）」与「### 引用」）。
+
 ## 7. 常驻与手机访问的实况
 
 ```console
@@ -115,7 +128,6 @@ daemon 实际跑过一轮：
 
 ## 尚未由本次会话执行的动作（需要人）
 
-- 点「确认发送」真实发一封（闸门逻辑已有测试；真实 SMTP 只登录验证过，未发信）；
 - 把某条真实纠正 `growth run` 后 `git diff` 审阅提交；
 - 按 `phone-access.sh` 的提示启用 Serve 后，在手机上打开并「添加到主屏幕」；
 - 若想开机常驻：把仓库/笔记库移出受保护目录或授予完全磁盘访问权限，再跑 `install-daemon.sh install`。
