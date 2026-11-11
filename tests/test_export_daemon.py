@@ -40,7 +40,7 @@ class FakeMailbox:
         self.emails = emails
         self.calls: list[tuple[str, int]] = []
 
-    def fetch_since(self, folder: str, last_uid: int) -> tuple[list[mail.Email], int]:
+    def fetch_since(self, folder: str, last_uid: int, limit: int | None = None) -> tuple[list[mail.Email], int]:
         self.calls.append((folder, last_uid))
         fresh = [e for e in self.emails if e.uid > last_uid]
         return fresh, 1

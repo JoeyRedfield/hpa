@@ -55,7 +55,7 @@ Lab 1 原文举例要求接南大 `smail` 邮箱和 `ehall` 办事大厅，我�
 
 ```bash
 ./bin/hpa index                      # 索引笔记库（增量，可反复跑）
-./bin/hpa mail sync                  # 拉新邮件（需在 secrets.env 配 QQ 授权码，见下）
+./bin/hpa mail sync                  # 拉新邮件（首次只取最近 50 封：--bootstrap-limit 调整）
 ./bin/hpa mail triage                # 规则优先分诊
 ./bin/hpa process                    # 模型分诊 → 抽取待办 → 检索 → 起草
 ./bin/hpa web                        # 手机端：待办 / 草稿确认 / 纠正

@@ -72,7 +72,7 @@ def _cmd_mail_sync(args: argparse.Namespace) -> int:
         print(f"❌ {exc}", file=sys.stderr)
         return 2
     try:
-        res = mail.sync(cfg, box, folder=args.folder)
+        res = mail.sync(cfg, box, folder=args.folder, bootstrap_limit=args.bootstrap_limit or None)
     except Exception as exc:  # 网络/认证错误：给一行明确原因，别刷栈
         print(f"❌ 同步失败（{args.folder}）：{exc}", file=sys.stderr)
         return 2
@@ -284,6 +284,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_sync = mail_sub.add_parser("sync", help="增量拉取邮件（幂等）")
     p_sync.add_argument("--folder", default="INBOX", help="IMAP 文件夹，默认 INBOX")
+    p_sync.add_argument(
+        "--bootstrap-limit",
+        type=int,
+        default=50,
+        help="首次同步只取最近 N 封（0 = 不限制，全量下载历史），默认 50",
+    )
     p_sync.set_defaults(func=_cmd_mail_sync)
 
     p_list = mail_sub.add_parser("list", help="列出已同步的邮件")

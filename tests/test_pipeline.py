@@ -96,7 +96,7 @@ class PipelineTest(unittest.TestCase):
                 body="仅通知。",
             ),
         ]
-        box = type("Box", (), {"fetch_since": lambda self, folder, last_uid, emails=emails: ([e for e in emails if e.uid > last_uid], 1)})()
+        box = type("Box", (), {"fetch_since": lambda self, folder, last_uid, limit=None, emails=emails: ([e for e in emails if e.uid > last_uid], 1)})()
         mail.sync(self.cfg, box)
 
     def test_end_to_end_and_idempotent(self) -> None:

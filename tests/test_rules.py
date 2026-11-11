@@ -97,7 +97,7 @@ class TriageTest(unittest.TestCase):
                 ]
             },
         )()
-        box.fetch_since = lambda folder, last_uid: (
+        box.fetch_since = lambda folder, last_uid, limit=None: (
             [e for e in box.emails if e.uid > last_uid],
             1,
         )

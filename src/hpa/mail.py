@@ -43,8 +43,14 @@ class Email:
 
 
 class Mailbox(Protocol):
-    def fetch_since(self, folder: str, last_uid: int) -> tuple[list[Email], int]:
-        """返回 (UID > last_uid 的邮件, 当前 UIDVALIDITY)。"""
+    def fetch_since(
+        self, folder: str, last_uid: int, limit: int | None = None
+    ) -> tuple[list[Email], int]:
+        """返回 (UID > last_uid 的邮件, 当前 UIDVALIDITY)。
+
+        `limit` 只用于首次同步：只取最近 N 封，避免为了一个助手把几千封历史
+        邮件连附件一起下载下来；之后的增量永远是全量拉。
+        """
         ...
 
 
@@ -57,7 +63,9 @@ class ImapMailbox:
         self.user = user
         self.password = password
 
-    def fetch_since(self, folder: str, last_uid: int) -> tuple[list[Email], int]:
+    def fetch_since(
+        self, folder: str, last_uid: int, limit: int | None = None
+    ) -> tuple[list[Email], int]:
         conn = imaplib.IMAP4_SSL(self.host, self.port)
         try:
             conn.login(self.user, self.password)
@@ -67,10 +75,11 @@ class ImapMailbox:
             uidvalidity = _uidvalidity(conn)
             typ, data = conn.uid("SEARCH", None, f"UID {last_uid + 1}:*")
             uids = sorted(int(x) for x in (data[0].split() if data and data[0] else []))
+            uids = [uid for uid in uids if uid > last_uid]
+            if limit and len(uids) > limit:
+                uids = uids[-limit:]  # 首次同步从最近 N 封开始，历史不追
             emails: list[Email] = []
             for uid in uids:
-                if uid <= last_uid:
-                    continue  # `UID n:*` 在无新邮件时会返回最后一封，必须过滤
                 typ, fetched = conn.uid("FETCH", str(uid), "(RFC822)")
                 if typ != "OK" or not fetched or fetched[0] is None:
                     raise RuntimeError(f"拉取 UID {uid} 失败: {typ}")
@@ -208,11 +217,17 @@ def save_cursor(conn, folder: str, last_uid: int, uidvalidity: int) -> None:
     store.set_meta(conn, _cursor_key(folder), json.dumps({"last_uid": last_uid, "uidvalidity": uidvalidity}))
 
 
-def sync(cfg: Config, mailbox: Mailbox, folder: str = "INBOX") -> SyncResult:
+def sync(
+    cfg: Config,
+    mailbox: Mailbox,
+    folder: str = "INBOX",
+    bootstrap_limit: int | None = 50,
+) -> SyncResult:
     conn = store.connect(cfg)
     try:
         last_uid, cursor_uidvalidity = load_cursor(conn, folder)
-        emails, uidvalidity = mailbox.fetch_since(folder, last_uid)
+        limit = bootstrap_limit if last_uid == 0 else None
+        emails, uidvalidity = mailbox.fetch_since(folder, last_uid, limit=limit)
         result = SyncResult(folder=folder, fetched=len(emails), uidvalidity=uidvalidity)
 
         if cursor_uidvalidity and uidvalidity != cursor_uidvalidity:
@@ -220,7 +235,7 @@ def sync(cfg: Config, mailbox: Mailbox, folder: str = "INBOX") -> SyncResult:
             # 靠 Message-ID 去重保证不重复处理。
             result.reset_cursor = True
             last_uid = 0
-            emails, uidvalidity = mailbox.fetch_since(folder, 0)
+            emails, uidvalidity = mailbox.fetch_since(folder, 0, limit=limit)
             result.fetched = len(emails)
             result.uidvalidity = uidvalidity
 

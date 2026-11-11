@@ -18,9 +18,14 @@ class FakeMailbox:
     def __init__(self, emails: list[mail.Email] | None = None, uidvalidity: int = 1) -> None:
         self.emails = emails or []
         self.uidvalidity = uidvalidity
+        self.limits: list[int | None] = []
 
-    def fetch_since(self, folder: str, last_uid: int):
-        return [e for e in self.emails if e.folder == folder and e.uid > last_uid], self.uidvalidity
+    def fetch_since(self, folder: str, last_uid: int, limit: int | None = None):
+        self.limits.append(limit)
+        fresh = [e for e in self.emails if e.folder == folder and e.uid > last_uid]
+        if limit:
+            fresh = fresh[-limit:]
+        return fresh, self.uidvalidity
 
 
 def make_email(message_id: str, uid: int, uidvalidity: int = 1, folder: str = "INBOX",
@@ -178,6 +183,28 @@ class SecretsTest(unittest.TestCase):
             self.assertEqual(s["HPA_MAIL_USER"], "me@qq.com")
             self.assertEqual(s["HPA_MAIL_PASSWORD"], "abcd efgh")
 
+
+class BootstrapLimitTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.vault = self.root / "vault"
+        self.vault.mkdir()
+        self.cfg = Config(vault=self.vault, project_root=self.root)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_only_first_sync_is_limited(self) -> None:
+        emails = [make_email(f"<{i}@x>", i) for i in range(1, 6)]
+        box = FakeMailbox(emails)
+        first = mail.sync(self.cfg, box, bootstrap_limit=2)
+        self.assertEqual(first.inserted, 2)
+        self.assertEqual(box.limits[0], 2)
+        # 首次只取最近 2 封后，游标已推进到最新 UID，更早的历史不追（设计如此）
+        second = mail.sync(self.cfg, box, bootstrap_limit=2)
+        self.assertEqual(second.inserted, 0)
+        self.assertIsNone(box.limits[1])
 
 if __name__ == "__main__":
     unittest.main()
