@@ -11,7 +11,13 @@ if [ ! -x "$TS" ]; then
   exit 2
 fi
 
-"$TS" serve --bg "$PORT"
+OUT=$("$TS" serve --bg "$PORT" 2>&1 || true)
+printf '%s\n' "$OUT"
+case "$OUT" in
+  *login.tailscale.com*)
+    echo "⚠️ 先打开上面的链接，在 Tailscale 后台一次性启用 Serve/HTTPS，然后重跑本脚本。" >&2
+    ;;
+esac
 HOST=$("$TS" status --json | /usr/bin/python3 -c \
   'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')
 TOKEN=$(grep -h '^HPA_WEB_TOKEN=' "$HOME/.config/hpa/secrets.env" 2>/dev/null | cut -d= -f2- || true)

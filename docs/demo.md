@@ -85,9 +85,37 @@ $ ./bin/hpa export --message-id '<tencent_…>'
 文件带 frontmatter（message_id / 发件人 / 分诊）、原文、待办、最终稿、引用、纠正记录；
 `outbox/` 在 `.gitignore` 里，由用户手动搬进笔记库。
 
+## 7. 常驻与手机访问的实况
+
+```console
+$ ./scripts/install-daemon.sh install
+⚠️ install 失败：macOS 隐私保护（TCC）不让 launchd 后台进程读 ~/Desktop 和 ~/Documents
+   （已自动卸载，避免 crash loop）
+
+$ ./scripts/start-foreground.sh
+· daemon 已启动（pid …）
+· web 已启动（pid …）
+```
+
+用 launchd 起服务时两个进程都 exit 126，日志里是
+`bash: ~/…/bin/hpa: Operation not permitted`。单独测一个 LaunchAgent 去 `ls` 仓库
+和 `ls ~/Documents/notes` 也都被拒，而 `~/.config/…/secrets.env` 能读——这是 macOS TCC 对
+「桌面/文稿」的保护，不是 hpa 的 bug。所以默认用法是终端里跑前台脚本（TCC 权限随终端），
+`install-daemon.sh` 会检测并自动回滚。
+
+daemon 实际跑过一轮：
+
+```json
+{"last_tick_at":"2026-11-11T12:48:21+00:00",
+ "last_tick_summary":"新邮件 0 / 规则命中 0 / 分诊 7 / 待办 4 / 草稿 0"}
+```
+
+`tailscale serve` 首次需要去 Tailscale 后台一次性启用 Serve/HTTPS（脚本会打印
+`https://login.tailscale.com/f/serve?node=…`）。
+
 ## 尚未由本次会话执行的动作（需要人）
 
 - 点「确认发送」真实发一封（闸门逻辑已有测试；真实 SMTP 只登录验证过，未发信）；
 - 把某条真实纠正 `growth run` 后 `git diff` 审阅提交；
-- `./scripts/install-daemon.sh install` 让 `hpa daemon` 开机常驻；
-- `./scripts/phone-access.sh` 在手机上打开并「添加到主屏幕」。
+- 按 `phone-access.sh` 的提示启用 Serve 后，在手机上打开并「添加到主屏幕」；
+- 若想开机常驻：把仓库/笔记库移出受保护目录或授予完全磁盘访问权限，再跑 `install-daemon.sh install`。

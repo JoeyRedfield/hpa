@@ -81,13 +81,18 @@ HPA_WEB_TOKEN=自己定一个长随机串
 
 ### 让它常开 + 手机访问
 
+本机 macOS 把「桌面 / 文稿」纳入 TCC 保护：launchd 后台任务读不到仓库和笔记库，`install-daemon.sh`
+会试跑、发现被拒后自动卸载并打印原因（记录见 `docs/demo.md` 第 7 节）。当前可用的常开方式：
+
 ```bash
-./scripts/install-daemon.sh install   # launchd 常驻：开机自启、挂了自动拉起
-./scripts/install-daemon.sh status    # 看是否在跑
-./scripts/phone-access.sh 8787        # tailscale serve，并打印带 token 的手机 URL
+caffeinate -i ./scripts/start-foreground.sh   # 终端里后台起 daemon + web，并防休眠
+./scripts/stop-foreground.sh                  # 停掉
+./scripts/phone-access.sh 8787                # tailscale serve，并打印带 token 的手机 URL
 ```
 
-`phone-access.sh` 用 `tailscale serve` 把本机 8787 暴露到 tailnet（只对你自己的设备可见），
-打印形如 `https://your-machine.your-tailnet.ts.net/?token=...` 的地址，手机浏览器打开后
-「添加到主屏幕」即为 PWA。token 在 `~/.config/hpa/secrets.env` 的 `HPA_WEB_TOKEN`，
-没配则用自动生成的 `state/web-token`。
+页面在本机是 `http://127.0.0.1:8787/`，首次要带 `?token=…`（token 在 `state/web-token` 或
+`~/.config/hpa/secrets.env` 的 `HPA_WEB_TOKEN`），之后写 Cookie。`phone-access.sh` 用
+`tailscale serve` 把页面暴露到 tailnet（只对你自己的设备可见），第一次需要按它打印的链接去
+Tailscale 后台一次性启用 Serve/HTTPS，再重跑。若确实要 launchd 常驻：把仓库和笔记库移出
+「桌面 / 文稿」，或给运行 `hpa` 的解释器授予「完全磁盘访问权限」，再
+`./scripts/install-daemon.sh install`。

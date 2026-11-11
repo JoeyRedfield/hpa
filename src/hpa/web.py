@@ -331,7 +331,7 @@ def make_server(
 ) -> ThreadingHTTPServer:
     settings = load_web_settings(cfg)
     bind_host = host or settings.get("host", "127.0.0.1")
-    bind_port = int(port or settings.get("port", 8787))
+    bind_port = int(settings.get("port", 8787)) if port is None else port
     server = ThreadingHTTPServer((bind_host, bind_port), Handler)
     server.cfg = cfg  # type: ignore[attr-defined]
     server.token = token or ensure_token(cfg)  # type: ignore[attr-defined]
