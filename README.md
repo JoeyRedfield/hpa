@@ -40,6 +40,17 @@ Lab 1 原文举例要求接南大 `smail` 邮箱和 `ehall` 办事大厅，我�
 - ✅ M4 成长闭环：手机上记一条纠正 → `hpa growth run` 让模型把它改写成 `rules/mail-triage.md` 的一条规则、`rules/reply-style.md` 的写作要求、或 `memory/preferences.md` 的一条记忆；新规则先过 DSL 语法校验（写坏就回滚），可判定的同时生成 `tests/cases/*.md` 回归样例，`hpa growth check` 随时验证。改动只写本仓库、带「来源：纠正 #N」注释，用 `git diff` 审完再提交——**新会话重新加载规则即生效**。
 - ✅ M5 组合与归档：`hpa daemon` 每 5 分钟一轮「同步 → 规则分诊 → 模型流水线」，单轮失败只记日志不杀循环，模型/邮箱凭据缺失时自动降级；配 `HPA_PUSH_URL` 可在有新事时 POST 一条消息到手机（不配也能在手机页看到，页面 20s 自刷新）。`hpa export` 把已发送的邮件连同原文、待办、最终稿、引用、纠正记录导出成带 frontmatter 的 Markdown 到 `outbox/`，由我手动搬进笔记库（保持 vault 只读）。至此走通一条完整流程：**邮件进来 → 待办+草稿 → 手机确认发送 → 导出归档**。
 
+## 对应 Lab1 的五项能力
+
+| 作业要求 | 这里的等价实现 | 看哪里 |
+| --- | --- | --- |
+| 个人数据库：索引、检索、随资料更新、定位原文 | 只读索引 Obsidian vault，`hpa index` 增量（mtime+size），`hpa ask` 返回 `文件:行号` | `src/hpa/kb.py`、ADR 0001 |
+| 持续关联邮箱：新邮件/历史/草稿，重复不重复处理 | QQ IMAP `UIDVALIDITY+UID` 游标 + Message-ID 去重 + 发送两阶段状态机 | `src/hpa/mail.py`、`src/hpa/send.py` |
+| 办理事务：查询 + 至少一种材料/表单准备 + 提交前确认 | 工作事务流：邮件 → 待办与截止时间 → 检索资料 → 起草 → 手机确认后发送；不可撤销动作（发送/改稿/驳回）全部过确认闸门 | `src/hpa/pipeline.py`、`hpa web` |
+| 手机端联动：发起/进度/改草稿/确认，不依赖桌面窗口 | 本机 PWA（Tailscale 内网），`hpa daemon` 后台跑，页面 20s 自刷新 | `src/hpa/web/`、`scripts/phone-access.sh` |
+| 能力组合：共享上下文、跨工具、一条愿意反复用的流程 | 一条完整链路：邮件 → 待办 → 检索笔记库 → 引用原文起草 → 确认发送 → 导出归档 | `tests/test_export_daemon.py`（端到端） |
+| 成功流程与纠正沉淀，Git 管理，新会话复用 | `hpa growth`：纠正 → 规则/记忆 + 回归样例；改动只写仓库、可 `git diff` 审 | `src/hpa/growth.py`、ADR 0002 |
+
 ## 跑起来（当前形态）
 
 ```bash
