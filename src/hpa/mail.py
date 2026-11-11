@@ -234,6 +234,7 @@ def sync(cfg: Config, mailbox: Mailbox, folder: str = "INBOX") -> SyncResult:
             last_uid = max(last_uid, max(m.uid for m in emails))
             result.last_uid = last_uid
             save_cursor(conn, folder, last_uid, uidvalidity)
+        store.set_meta(conn, "last_sync_at", store.utcnow())
         conn.commit()
         return result
     finally:

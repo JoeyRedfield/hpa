@@ -9,3 +9,8 @@ poll_seconds = 300
 [llm]
 provider = "deepseek"
 model = "deepseek-chat"
+
+[web]
+# 手机经 Tailscale 访问时改成 Tailscale IP（或 0.0.0.0 再由防火墙限制）。
+host = "127.0.0.1"
+port = 8787

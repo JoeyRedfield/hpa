@@ -36,4 +36,26 @@ Lab 1 原文举例要求接南大 `smail` 邮箱和 `ehall` 办事大厅，我�
 - ✅ M1 个人数据库：`hpa index` 增量索引 680 篇（P0 651 / P1 28 / P2 1，约 2.6s）；`hpa ask` 中文检索并给 `文件:行号` 定位；P1/P2 在 SQL 层被 `purpose=prompt` 挡在模型之外。设计见 [ADR 0001](docs/adr/0001-sqlite-fts5-trigram.md)。
 - ✅ M2 邮件接入：`hpa mail sync` 用 `UIDVALIDITY+UID` 游标增量拉取，Message-ID 去重（三次同步不增），UIDVALIDITY 变化时重扫不重复；`rules/mail-triage.md` 是人工可改的规则 DSL（12 条），`hpa mail triage` 规则优先、命中即定型。
 - ✅ M3a 流水线（未发送）：`hpa process` = 模型分诊 → 抽取待办 → 检索 P0 笔记 → 起草带 `[引用]` 的回复，草稿状态 `proposed` 进队列；全程幂等，`--dry-run` 只走一遍不写库。LLM 走 DeepSeek（OpenAI 兼容），provider 已抽象。
-- ⬜ M3b 确认闸门（手机端 Web/PWA：看草稿、改、确认后才发送）→ M4 成长闭环 → M5 组合与归档
+- ✅ M3b 确认闸门：`hpa web` 起手机端一页（PWA，绑定 `127.0.0.1:8787`，手机经 Tailscale 访问）；草稿可在手机上改（改一次 = 新版本，须重新确认）、驳回、记录纠正；**只有点「确认发送」才走 SMTP**。发送状态机 `proposed → sending → sent`，失败退回 `proposed` 并显示原因；崩溃在 `sending` 不自动重发，由人核对后收尾。
+- ⬜ M4 成长闭环 → M5 组合与归档
+
+## 跑起来（当前形态）
+
+```bash
+./bin/hpa index                      # 索引笔记库（增量，可反复跑）
+./bin/hpa mail sync                  # 拉新邮件（需在 secrets.env 配 QQ 授权码，见下）
+./bin/hpa mail triage                # 规则优先分诊
+./bin/hpa process                    # 模型分诊 → 抽取待办 → 检索 → 起草
+./bin/hpa web                        # 手机端：待办 / 草稿确认 / 纠正
+```
+
+凭据放 `~/.config/hpa/secrets.env`（不进 git）：
+
+```ini
+HPA_MAIL_USER=you@qq.com
+HPA_MAIL_PASSWORD=QQ邮箱IMAP授权码
+HPA_LLM_API_KEY=sk-...
+HPA_WEB_TOKEN=自己定一个长随机串
+```
+
+手机访问：`http://<Mac 的 Tailscale IP>:8787/?token=<HPA_WEB_TOKEN>`（首次带 token，之后写 Cookie）。

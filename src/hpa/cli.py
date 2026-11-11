@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import kb, mail, pipeline, rules, store, triage
+from . import kb, mail, pipeline, rules, store, triage, web
 from .config import Config
 from .llm import LLMError, from_config as llm_from_config
 
@@ -163,6 +163,13 @@ def _cmd_rules_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_web(args: argparse.Namespace) -> int:
+    cfg = Config.load(Path(args.config) if args.config else None)
+    print("启动手机端控制台（Ctrl-C 退出）")
+    web.serve(cfg, host=args.host, port=args.port)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hpa", description="会成长的个人助手")
     parser.add_argument("--config", help="config.toml 路径（默认仓库根）")
@@ -209,6 +216,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_process.add_argument("-n", "--limit", type=int, default=10, help="单次处理上限，默认 10")
     p_process.add_argument("--dry-run", action="store_true", help="走一遍但不写库、不排队")
     p_process.set_defaults(func=_cmd_process)
+
+    p_web = sub.add_parser("web", help="手机端控制台（待办 / 草稿确认 / 纠正）")
+    p_web.add_argument("--host", help="绑定地址，默认取 config.toml [web] host 或 127.0.0.1")
+    p_web.add_argument("--port", type=int, help="端口，默认取 config.toml [web] port 或 8787")
+    p_web.set_defaults(func=_cmd_web)
 
     p_rules = sub.add_parser("rules", help="检查规则文件语法")
     rules_sub = p_rules.add_subparsers(dest="rules_cmd", required=True)

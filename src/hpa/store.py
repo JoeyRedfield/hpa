@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS drafts (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     message_id TEXT NOT NULL,
     version    INTEGER NOT NULL,
+    from_addr  TEXT NOT NULL DEFAULT '',
     to_addr    TEXT NOT NULL DEFAULT '',
     subject    TEXT NOT NULL DEFAULT '',
     body       TEXT NOT NULL,
@@ -54,6 +55,7 @@ CREATE TABLE IF NOT EXISTS drafts (
     created_at TEXT NOT NULL,
     confirmed_at TEXT,
     sent_at    TEXT,
+    last_error TEXT,
     UNIQUE (message_id, version)
 );
 
@@ -78,9 +80,11 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "kb_queries": "TEXT NOT NULL DEFAULT '[]'",
     },
     "drafts": {
+        "from_addr": "TEXT NOT NULL DEFAULT ''",
         "to_addr": "TEXT NOT NULL DEFAULT ''",
         "subject": "TEXT NOT NULL DEFAULT ''",
         "citations": "TEXT NOT NULL DEFAULT '[]'",
+        "last_error": "TEXT",
     },
 }
 
@@ -93,6 +97,7 @@ def connect(cfg: Config) -> sqlite3.Connection:
     cfg.state_dir.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(cfg.state_dir / "hpa.sqlite3")
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 5000")
     conn.executescript(SCHEMA)
     _migrate(conn)
     return conn

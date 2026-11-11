@@ -202,11 +202,12 @@ def _process_one(  # noqa: PLR0913 - 流水线内部函数，参数即上下文
     result.drafted += 1
     if not dry_run:
         conn.execute(
-            """INSERT INTO drafts(message_id, version, to_addr, subject, body,
+            """INSERT INTO drafts(message_id, from_addr, version, to_addr, subject, body,
                                   citations, status, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, 'proposed', ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed', ?)""",
             (
                 email.message_id,
+                email.to_addr,
                 _next_version(conn, email.message_id),
                 email.from_addr,
                 subject,

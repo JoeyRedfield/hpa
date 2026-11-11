@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>个人助手</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#101418">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="/static/icon.svg">
+<link rel="icon" href="/static/icon.svg">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>个人助手</h1>
+  <div id="statusbar" class="statusbar">载入中…</div>
+</header>
+
+<main>
+  <section>
+    <h2>待确认草稿 <span id="draft-count" class="pill">0</span></h2>
+    <p class="hint">只有你在这里点「确认发送」，外发才真的发生。发送后不可撤回。</p>
+    <div id="drafts"></div>
+    <div id="drafts-empty" class="empty" hidden>没有待确认的草稿。</div>
+  </section>
+
+  <section>
+    <h2>待办 <span id="todo-count" class="pill">0</span></h2>
+    <div id="todos"></div>
+    <div id="todos-empty" class="empty" hidden>没有未完成的待办。</div>
+  </section>
+
+  <section>
+    <h2>最近纠正</h2>
+    <p class="hint">在这里写下「哪里做错了」，它会进纠正日志，由成长循环固化成规则。</p>
+    <div id="corrections"></div>
+    <div id="corrections-empty" class="empty" hidden>还没有纠正记录。</div>
+  </section>
+</main>
+
+<footer>
+  <button id="refresh" class="secondary">刷新</button>
+  <span id="updated" class="muted"></span>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
