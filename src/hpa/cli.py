@@ -1,4 +1,4 @@
-"""命令行入口：hpa index / ask / stats。"""
+"""命令行入口：hpa index / ask / stats / mail。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import kb
+from . import kb, mail, rules, store, triage
 from .config import Config
 
 
@@ -62,6 +62,80 @@ def _cmd_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_mail_sync(args: argparse.Namespace) -> int:
+    cfg = Config.load(Path(args.config) if args.config else None)
+    try:
+        box = mail.mailbox_from_env()
+    except RuntimeError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        return 2
+    try:
+        res = mail.sync(cfg, box, folder=args.folder)
+    except Exception as exc:  # 网络/认证错误：给一行明确原因，别刷栈
+        print(f"❌ 同步失败（{args.folder}）：{exc}", file=sys.stderr)
+        return 2
+    print(f"邮箱 {args.folder}：拉取 {res.fetched} / 新增 {res.inserted} / 重复 {res.duplicates}")
+    if res.reset_cursor:
+        print("⚠️ UIDVALIDITY 变化，游标已重置并全量重扫（Message-ID 去重兜底）")
+    if res.last_uid:
+        print(f"游标推进到 UID {res.last_uid}（UIDVALIDITY {res.uidvalidity}）")
+    return 0
+
+
+def _cmd_mail_list(args: argparse.Namespace) -> int:
+    cfg = Config.load(Path(args.config) if args.config else None)
+    conn = store.connect(cfg)
+    try:
+        rows = conn.execute(
+            "SELECT received_at, from_addr, subject, triage FROM messages "
+            "ORDER BY received_at DESC, message_id LIMIT ?",
+            (args.limit,),
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        print("还没有同步过邮件。先运行：bin/hpa mail sync")
+        return 0
+    for row in rows:
+        flag = row["triage"] or "待分类"
+        print(f"[{flag}] {row['received_at'] or '?'}  {row['from_addr']}")
+        print(f"    {row['subject']}")
+    return 0
+
+
+def _cmd_mail_triage(args: argparse.Namespace) -> int:
+    cfg = Config.load(Path(args.config) if args.config else None)
+    try:
+        res = triage.triage_pending(cfg, limit=args.limit, dry_run=args.dry_run)
+    except rules.RuleSyntaxError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        return 2
+    verb = "预演" if args.dry_run else "已定型"
+    print(f"扫描 {res.scanned} 封：{verb} {res.matched} / 未命中 {res.unmatched}")
+    if res.by_action:
+        detail = " ".join(f"{k}:{v}" for k, v in sorted(res.by_action.items()))
+        print(f"按规则：{detail}")
+    if res.todos_created:
+        print(f"新建待办 {res.todos_created} 条")
+    if res.unmatched:
+        print("未命中的留给模型判断（M3 接入 LLM 后处理）")
+    return 0
+
+
+def _cmd_rules_check(args: argparse.Namespace) -> int:
+    cfg = Config.load(Path(args.config) if args.config else None)
+    path = cfg.project_root / "rules" / "mail-triage.md"
+    try:
+        loaded = rules.load_rules(cfg)
+    except rules.RuleSyntaxError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        return 2
+    print(f"✅ {path}：{len(loaded)} 条规则")
+    for rule in loaded:
+        print(f"   L{rule.line_no}: {rule.action} ← {rule.raw}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hpa", description="会成长的个人助手")
     parser.add_argument("--config", help="config.toml 路径（默认仓库根）")
@@ -85,6 +159,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_stats = sub.add_parser("stats", help="索引统计")
     p_stats.set_defaults(func=_cmd_stats)
+
+    p_mail = sub.add_parser("mail", help="邮件同步与查看")
+    mail_sub = p_mail.add_subparsers(dest="mail_cmd", required=True)
+
+    p_sync = mail_sub.add_parser("sync", help="增量拉取邮件（幂等）")
+    p_sync.add_argument("--folder", default="INBOX", help="IMAP 文件夹，默认 INBOX")
+    p_sync.set_defaults(func=_cmd_mail_sync)
+
+    p_list = mail_sub.add_parser("list", help="列出已同步的邮件")
+    p_list.add_argument("-n", "--limit", type=int, default=20, help="条数，默认 20")
+    p_list.set_defaults(func=_cmd_mail_list)
+
+    p_triage = mail_sub.add_parser("triage", help="按规则分诊（规则优先，未命中留给模型）")
+    p_triage.add_argument("-n", "--limit", type=int, default=50, help="单次处理上限，默认 50")
+    p_triage.add_argument("--dry-run", action="store_true", help="只看结果，不写库")
+    p_triage.set_defaults(func=_cmd_mail_triage)
+
+    p_rules = sub.add_parser("rules", help="检查规则文件语法")
+    rules_sub = p_rules.add_subparsers(dest="rules_cmd", required=True)
+    p_check = rules_sub.add_parser("check", help="解析 rules/mail-triage.md")
+    p_check.set_defaults(func=_cmd_rules_check)
+
     return parser
 
 
