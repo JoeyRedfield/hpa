@@ -34,4 +34,6 @@ Lab 1 原文举例要求接南大 `smail` 邮箱和 `ehall` 办事大厅，我�
 - ✅ intent（本文件）
 - ✅ spec：[.scratch/growing-assistant/spec.md](.scratch/growing-assistant/spec.md)
 - ✅ M1 个人数据库：`hpa index` 增量索引 680 篇（P0 651 / P1 28 / P2 1，约 2.6s）；`hpa ask` 中文检索并给 `文件:行号` 定位；P1/P2 在 SQL 层被 `purpose=prompt` 挡在模型之外。设计见 [ADR 0001](docs/adr/0001-sqlite-fts5-trigram.md)。
-- ⬜ M2 邮件接入（QQ IMAP）→ M3 草稿确认闸门 → M4 成长闭环 → M5 组合与归档
+- ✅ M2 邮件接入：`hpa mail sync` 用 `UIDVALIDITY+UID` 游标增量拉取，Message-ID 去重（三次同步不增），UIDVALIDITY 变化时重扫不重复；`rules/mail-triage.md` 是人工可改的规则 DSL（12 条），`hpa mail triage` 规则优先、命中即定型。
+- ✅ M3a 流水线（未发送）：`hpa process` = 模型分诊 → 抽取待办 → 检索 P0 笔记 → 起草带 `[引用]` 的回复，草稿状态 `proposed` 进队列；全程幂等，`--dry-run` 只走一遍不写库。LLM 走 DeepSeek（OpenAI 兼容），provider 已抽象。
+- ⬜ M3b 确认闸门（手机端 Web/PWA：看草稿、改、确认后才发送）→ M4 成长闭环 → M5 组合与归档

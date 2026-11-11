@@ -240,6 +240,21 @@ def sync(cfg: Config, mailbox: Mailbox, folder: str = "INBOX") -> SyncResult:
         conn.close()
 
 
+def from_row(row) -> Email:
+    """从 `messages` 表行还原 Email（同步、分诊、流水线共用）。"""
+    return Email(
+        message_id=row["message_id"],
+        folder=row["folder"],
+        uid=row["uid"],
+        uidvalidity=row["uidvalidity"],
+        received_at=row["received_at"],
+        from_addr=row["from_addr"] or "",
+        to_addr=row["to_addr"] or "",
+        subject=row["subject"] or "",
+        body=row["body"] or "",
+    )
+
+
 def load_secrets(path: Path = SECRETS_PATH) -> dict[str, str]:
     """读 `~/.config/hpa/secrets.env`（KEY=VALUE，允许 # 注释）。"""
     secrets: dict[str, str] = {}

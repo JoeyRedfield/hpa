@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS messages (
     body        TEXT,
     triage      TEXT,
     triage_by   TEXT,
+    kb_queries  TEXT NOT NULL DEFAULT '[]',
+    extracted_at TEXT,
+    drafted_at  TEXT,
     seen_at     TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_uid
@@ -43,7 +46,10 @@ CREATE TABLE IF NOT EXISTS drafts (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     message_id TEXT NOT NULL,
     version    INTEGER NOT NULL,
+    to_addr    TEXT NOT NULL DEFAULT '',
+    subject    TEXT NOT NULL DEFAULT '',
     body       TEXT NOT NULL,
+    citations  TEXT NOT NULL DEFAULT '[]',
     status     TEXT NOT NULL DEFAULT 'proposed',
     created_at TEXT NOT NULL,
     confirmed_at TEXT,
@@ -64,6 +70,20 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 """
 
+# 旧库迁移：CREATE TABLE IF NOT EXISTS 不会补列，启动时按需 ALTER。
+MIGRATIONS: dict[str, dict[str, str]] = {
+    "messages": {
+        "extracted_at": "TEXT",
+        "drafted_at": "TEXT",
+        "kb_queries": "TEXT NOT NULL DEFAULT '[]'",
+    },
+    "drafts": {
+        "to_addr": "TEXT NOT NULL DEFAULT ''",
+        "subject": "TEXT NOT NULL DEFAULT ''",
+        "citations": "TEXT NOT NULL DEFAULT '[]'",
+    },
+}
+
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -74,7 +94,17 @@ def connect(cfg: Config) -> sqlite3.Connection:
     conn = sqlite3.connect(cfg.state_dir / "hpa.sqlite3")
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, columns in MIGRATIONS.items():
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for name, decl in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+    conn.commit()
 
 
 def get_meta(conn: sqlite3.Connection, key: str) -> str | None:

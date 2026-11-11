@@ -7,8 +7,9 @@ import sys
 import time
 from pathlib import Path
 
-from . import kb, mail, rules, store, triage
+from . import kb, mail, pipeline, rules, store, triage
 from .config import Config
+from .llm import LLMError, from_config as llm_from_config
 
 
 def _fmt_time(ts: float | None) -> str:
@@ -118,7 +119,33 @@ def _cmd_mail_triage(args: argparse.Namespace) -> int:
     if res.todos_created:
         print(f"新建待办 {res.todos_created} 条")
     if res.unmatched:
-        print("未命中的留给模型判断（M3 接入 LLM 后处理）")
+        print("未命中的留给模型判断：运行 bin/hpa process 继续流水线")
+    return 0
+
+
+def _cmd_process(args: argparse.Namespace) -> int:
+    cfg = Config.load(Path(args.config) if args.config else None)
+    try:
+        llm = llm_from_config(cfg)
+    except LLMError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        return 2
+    try:
+        res = pipeline.process_pending(cfg, llm, limit=args.limit, dry_run=args.dry_run)
+    except LLMError as exc:
+        print(f"❌ 流水线中止：{exc}", file=sys.stderr)
+        return 2
+    verb = "预演" if args.dry_run else "完成"
+    print(
+        f"{verb}：分诊 {res.classified} / 抽取 {res.extracted}"
+        f" / 起草 {res.drafted} / 新待办 {res.todos_created}"
+    )
+    for event in res.events:
+        print(f"   · {event}")
+    for err in res.errors:
+        print(f"   ⚠️ {err}", file=sys.stderr)
+    if res.drafted and not args.dry_run:
+        print("草稿已进确认队列：等手机端确认后才会发送（M3b 提供页面）。")
     return 0
 
 
@@ -175,6 +202,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_triage.add_argument("-n", "--limit", type=int, default=50, help="单次处理上限，默认 50")
     p_triage.add_argument("--dry-run", action="store_true", help="只看结果，不写库")
     p_triage.set_defaults(func=_cmd_mail_triage)
+
+    p_process = sub.add_parser(
+        "process", help="流水线：模型分诊 → 抽取待办 → 检索资料 → 起草回复（不发送）"
+    )
+    p_process.add_argument("-n", "--limit", type=int, default=10, help="单次处理上限，默认 10")
+    p_process.add_argument("--dry-run", action="store_true", help="走一遍但不写库、不排队")
+    p_process.set_defaults(func=_cmd_process)
 
     p_rules = sub.add_parser("rules", help="检查规则文件语法")
     rules_sub = p_rules.add_subparsers(dest="rules_cmd", required=True)

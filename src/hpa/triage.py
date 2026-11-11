@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from . import rules, store
 from .config import Config
-from .mail import Email
+from .mail import from_row
 
 
 @dataclass
@@ -27,20 +27,6 @@ class TriageResult:
             self.by_action = {}
 
 
-def _row_to_email(row: sqlite3.Row) -> Email:
-    return Email(
-        message_id=row["message_id"],
-        folder=row["folder"],
-        uid=row["uid"],
-        uidvalidity=row["uidvalidity"],
-        received_at=row["received_at"],
-        from_addr=row["from_addr"] or "",
-        to_addr=row["to_addr"] or "",
-        subject=row["subject"] or "",
-        body=row["body"] or "",
-    )
-
-
 def triage_pending(cfg: Config, limit: int = 50, dry_run: bool = False) -> TriageResult:
     loaded = rules.load_rules(cfg)
     result = TriageResult()
@@ -51,7 +37,7 @@ def triage_pending(cfg: Config, limit: int = 50, dry_run: bool = False) -> Triag
         ).fetchall()
         result.scanned = len(rows)
         for row in rows:
-            match = rules.classify(loaded, _row_to_email(row))
+            match = rules.classify(loaded, from_row(row))
             if match is None:
                 result.unmatched += 1
                 continue
