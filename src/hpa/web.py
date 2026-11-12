@@ -323,9 +323,13 @@ class Handler(BaseHTTPRequestHandler):
             return {"status": "done" if action == "done" else "open", "id": todo_id}
         if path == "/api/fitness/record":
             kind = str(payload.get("kind") or "workout")
-            if kind != "workout":
-                raise ValueError(f"未知记录类型：{kind}")
-            return fitness.record_workout(cfg, payload)
+            if kind == "workout":
+                return fitness.record_workout(cfg, payload)
+            if kind == "weight":
+                return fitness.record_weight(cfg, payload)
+            if kind == "profile":
+                return fitness.record_profile(cfg, payload)
+            raise ValueError(f"未知记录类型：{kind}")
         if len(parts) == 5 and parts[:3] == ["api", "fitness", "workouts"] and parts[4] == "delete":
             return fitness.delete_workout(cfg, int(parts[3]), payload.get("confirm") is True)
         if path == "/api/sync":

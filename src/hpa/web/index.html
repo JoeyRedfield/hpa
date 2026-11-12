@@ -82,7 +82,51 @@
     </section>
 
     <section>
+      <h2>体重</h2>
+      <p class="hint">一天一条，重复填会覆盖当天；只作背景趋势，不单独出建议。</p>
+      <div class="fx-weight-form">
+        <input id="fx-weight-input" type="number" inputmode="decimal" min="20" max="300" step="0.1" placeholder="今天体重 kg" aria-label="体重 kg">
+        <button id="fx-weight-save" class="secondary">记录体重</button>
+        <span id="fx-weight-today" class="muted"></span>
+      </div>
+    </section>
+
+    <section>
+      <h2>训练画像</h2>
+      <p class="hint">建议会按它对齐；这里只改这四项，文件里的其他文字会保留。</p>
+      <div class="fx-profile">
+        <label>目标
+          <select id="pf-goal">
+            <option value="">未填</option>
+            <option value="力量">力量</option>
+            <option value="增肌">增肌</option>
+            <option value="减脂">减脂</option>
+            <option value="维持">维持</option>
+            <option value="未设定">未设定</option>
+          </select>
+        </label>
+        <label>每周可练
+          <input id="pf-days" type="number" inputmode="numeric" min="1" max="7" step="1" placeholder="1–7">
+        </label>
+        <label>器械
+          <input id="pf-equipment" maxlength="80" placeholder="健身房 / 哑铃 / 自重">
+        </label>
+        <label>伤病
+          <input id="pf-injuries" maxlength="80" placeholder="无 / 膝盖旧伤">
+        </label>
+        <div class="actions">
+          <button id="pf-save" class="primary">保存画像</button>
+        </div>
+        <div id="pf-missing" class="fx-warn" hidden></div>
+      </div>
+    </section>
+
+    <section>
       <h2>最近</h2>
+      <h3>体重趋势</h3>
+      <div id="fitness-weights"></div>
+      <div id="fitness-weights-empty" class="empty" hidden>还没有体重记录。</div>
+      <h3>训练</h3>
       <div id="fitness-recent"></div>
       <div id="fitness-recent-empty" class="empty" hidden>还没有训练记录。</div>
     </section>

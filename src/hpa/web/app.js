@@ -175,6 +175,7 @@ function renderCorrections(rows) {
 const TAB_KEY = "hpa:tab";
 let fxCatalog = [];
 let fxPending = [];
+let profileDirty = false;
 
 function shanghaiNow() {
   try {
@@ -390,6 +391,104 @@ function renderRecent(workouts) {
     .join("");
 }
 
+function renderWeights(weights) {
+  $("#fitness-weights-empty").hidden = weights.length > 0;
+  const today = localToday();
+  const mine = weights.find((w) => w.logged_on === today);
+  $("#fx-weight-today").textContent = mine ? `今天已记 ${Number(mine.weight_kg).toFixed(1)} kg` : "";
+  if (!weights.length) {
+    $("#fitness-weights").innerHTML = "";
+    return;
+  }
+  const values = weights.map((w) => Number(w.weight_kg));
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min;
+  $("#fitness-weights").innerHTML = weights
+    .map((w, i) => {
+      const value = Number(w.weight_kg);
+      const pct = span > 0 ? 20 + ((value - min) / span) * 80 : 60;
+      const prev = weights[i + 1];
+      const delta = prev ? value - Number(prev.weight_kg) : null;
+      const deltaText = delta === null
+        ? ""
+        : ` <span class="muted">${delta >= 0 ? "+" : ""}${delta.toFixed(1)}</span>`;
+      return `<div class="fx-weight-row">
+        <span class="fx-weight-date">${esc(w.logged_on.slice(5))}</span>
+        <span class="fx-weight-bar"><span style="width:${pct.toFixed(0)}%"></span></span>
+        <span class="fx-weight-kg">${value.toFixed(1)} kg${deltaText}</span>
+      </div>`;
+    })
+    .join("");
+}
+
+function renderProfile(profile) {
+  const missing = profile.missing || [];
+  const box = $("#pf-missing");
+  box.hidden = missing.length === 0;
+  box.textContent = missing.length
+    ? `画像还缺：${missing.join("、")}。建议会明说缺什么，不会瞎猜。`
+    : "";
+  if (profileDirty) return;
+  const active = document.activeElement;
+  const fields = ["pf-goal", "pf-days", "pf-equipment", "pf-injuries"];
+  if (active && fields.includes(active.id)) return;
+  $("#pf-goal").value = profile.goal || "";
+  $("#pf-days").value = profile.days_per_week == null ? "" : profile.days_per_week;
+  $("#pf-equipment").value = profile.equipment || "";
+  $("#pf-injuries").value = profile.injuries || "";
+}
+
+async function saveWeight() {
+  const raw = $("#fx-weight-input").value;
+  const value = Number(raw);
+  if (raw === "" || !(value >= 20 && value <= 300)) {
+    toast("体重应在 20–300 kg", 5000);
+    return;
+  }
+  try {
+    await api("/api/fitness/record", { kind: "weight", weight_kg: value });
+    $("#fx-weight-input").value = "";
+    toast("已记录体重");
+    await loadState();
+  } catch (e) {
+    toast(String(e.message || e), 5000);
+  }
+}
+
+async function saveProfile() {
+  const goal = $("#pf-goal").value;
+  const days = Number($("#pf-days").value);
+  const equipment = $("#pf-equipment").value.trim();
+  const injuries = $("#pf-injuries").value.trim();
+  if (!goal) {
+    toast("先选目标", 5000);
+    return;
+  }
+  if (!(Number.isInteger(days) && days >= 1 && days <= 7)) {
+    toast("每周可练填 1–7 的整数", 5000);
+    return;
+  }
+  if (!equipment || !injuries) {
+    toast("器械和伤病都要填；没有就写「无」", 5000);
+    return;
+  }
+  try {
+    await api("/api/fitness/record", {
+      kind: "profile",
+      goal,
+      days_per_week: days,
+      equipment,
+      injuries,
+    });
+    profileDirty = false;
+    toast("画像已保存");
+    await loadState();
+  } catch (e) {
+    toast(String(e.message || e), 5000);
+  }
+}
+
 function renderFitness(fitness) {
   fxCatalog = fitness.exercises || [];
   renderExerciseOptions();
@@ -397,6 +496,8 @@ function renderFitness(fitness) {
   if (!date.value) date.value = localToday();
   const time = $("#fx-time");
   if (!time.value) time.value = shanghaiNow().time;
+  renderWeights(fitness.weights || []);
+  renderProfile(fitness.profile || {});
   renderRecent(fitness.recent_workouts || []);
 }
 
@@ -429,7 +530,11 @@ function schedule() {
   }, 20000);
 }
 
-$("#refresh").addEventListener("click", loadState);
+$("#refresh").addEventListener("click", async () => {
+  if (profileDirty && !window.confirm("放弃未保存的画像修改？")) return;
+  profileDirty = false;
+  await loadState();
+});
 $("#pause").addEventListener("click", async () => {
   const next = !paused;
   if (next && !window.confirm("暂停后 daemon 不再拉新邮件、也不再自动起草；已排队的草稿仍可确认。确定暂停？")) return;
@@ -449,6 +554,15 @@ $("#fx-add").addEventListener("click", addExercise);
 $("#fx-save").addEventListener("click", saveWorkout);
 $("#fx-clear").addEventListener("click", clearWorkoutForm);
 $("#fx-exercise").addEventListener("change", syncWeightInput);
+$("#fx-weight-save").addEventListener("click", saveWeight);
+$("#fx-weight-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") saveWeight();
+});
+$("#pf-save").addEventListener("click", saveProfile);
+document.querySelectorAll("#pf-goal, #pf-days, #pf-equipment, #pf-injuries").forEach((el) => {
+  el.addEventListener("input", () => { profileDirty = true; });
+  el.addEventListener("change", () => { profileDirty = true; });
+});
 $("#fx-pending").addEventListener("input", (e) => {
   const el = e.target;
   if (!el.dataset.field) return;

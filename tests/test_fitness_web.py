@@ -189,5 +189,145 @@ class RecordWorkoutTest(FitnessWebCase):
         self.assertEqual(self._state()["fitness"]["recent_workouts"], [])
 
 
+class WeightAndProfileTest(FitnessWebCase):
+    def test_weight_keeps_one_row_per_day_and_overwrites(self) -> None:
+        code, data = self._post("/api/fitness/record", {"kind": "weight", "weight_kg": 75.0})
+        self.assertEqual(code, 200, data)
+        code, data = self._post("/api/fitness/record", {"kind": "weight", "weight_kg": 74.5})
+        self.assertEqual(code, 200, data)
+
+        weights = self._state()["fitness"]["weights"]
+        self.assertEqual(len(weights), 1)
+        self.assertEqual(weights[0]["logged_on"], _today())
+        self.assertEqual(weights[0]["weight_kg"], 74.5)
+
+    def test_profile_saves_four_lines_and_preserves_free_text(self) -> None:
+        memory = self.root / "memory"
+        memory.mkdir()
+        profile_path = memory / "training-profile.md"
+        profile_path.write_text(
+            "目标：增肌\n每周可练：3\n器械：健身房\n伤病：无\n\n"
+            "备注：膝盖旧伤，深蹲注意。\n伤病：膝盖旧伤，深蹲注意。\n",
+            encoding="utf-8",
+        )
+
+        code, data = self._post(
+            "/api/fitness/record",
+            {
+                "kind": "profile",
+                "goal": "力量",
+                "days_per_week": 4,
+                "equipment": "健身房 + 杠铃",
+                "injuries": "无",
+            },
+        )
+        self.assertEqual(code, 200, data)
+
+        profile = self._state()["fitness"]["profile"]
+        self.assertTrue(profile["complete"])
+        self.assertEqual(profile["missing"], [])
+        self.assertEqual(profile["goal"], "力量")
+        self.assertEqual(profile["days_per_week"], 4)
+        self.assertEqual(profile["equipment"], "健身房 + 杠铃")
+        self.assertEqual(profile["injuries"], "无")
+
+        text = profile_path.read_text(encoding="utf-8")
+        lines = [line for line in text.splitlines() if line.strip()]
+        self.assertEqual(lines[0], "目标：力量")
+        self.assertEqual(lines[1], "每周可练：4")
+        self.assertEqual(lines[2], "器械：健身房 + 杠铃")
+        self.assertEqual(lines[3], "伤病：无")
+        self.assertIn("备注：膝盖旧伤，深蹲注意。", text)
+        self.assertIn("伤病：膝盖旧伤，深蹲注意。", text)
+        self.assertEqual(text.count("伤病："), 2)
+        self.assertEqual(text.count("目标："), 1)
+
+    def test_missing_profile_line_marks_incomplete(self) -> None:
+        memory = self.root / "memory"
+        memory.mkdir()
+        (memory / "training-profile.md").write_text(
+            "目标：力量\n器械：健身房\n\n自由备注\n", encoding="utf-8"
+        )
+
+        profile = self._state()["fitness"]["profile"]
+        self.assertFalse(profile["complete"])
+        self.assertEqual(profile["goal"], "力量")
+        self.assertIsNone(profile["days_per_week"])
+        self.assertIn("每周可练", profile["missing"])
+        self.assertIn("伤病", profile["missing"])
+        self.assertNotIn("目标", profile["missing"])
+
+    def test_invalid_profile_is_rejected_and_file_unchanged(self) -> None:
+        memory = self.root / "memory"
+        memory.mkdir()
+        profile_path = memory / "training-profile.md"
+        profile_path.write_text(
+            "目标：力量\n每周可练：3\n器械：健身房\n伤病：无\n", encoding="utf-8"
+        )
+        before = profile_path.read_text(encoding="utf-8")
+
+        code, data = self._post(
+            "/api/fitness/record",
+            {"kind": "profile", "goal": "力量", "days_per_week": 0, "equipment": "健身房", "injuries": "无"},
+        )
+        self.assertEqual(code, 400)
+        self.assertIn("每周可练", data["error"])
+        self.assertEqual(profile_path.read_text(encoding="utf-8"), before)
+
+        code, data = self._post(
+            "/api/fitness/record",
+            {"kind": "profile", "goal": "随便", "days_per_week": 3, "equipment": "健身房", "injuries": "无"},
+        )
+        self.assertEqual(code, 400)
+        self.assertIn("目标", data["error"])
+        self.assertEqual(profile_path.read_text(encoding="utf-8"), before)
+
+        code, data = self._post(
+            "/api/fitness/record",
+            {
+                "kind": "profile",
+                "goal": "力量",
+                "days_per_week": 3,
+                "equipment": "健身房\n目标：随便",
+                "injuries": "无",
+            },
+        )
+        self.assertEqual(code, 400)
+        self.assertIn("换行", data["error"])
+        self.assertEqual(profile_path.read_text(encoding="utf-8"), before)
+
+    def test_rejects_out_of_range_weight_and_future_date(self) -> None:
+        for bad in (10, 301, "75"):
+            code, data = self._post("/api/fitness/record", {"kind": "weight", "weight_kg": bad})
+            self.assertEqual(code, 400, (bad, data))
+
+        tomorrow = (datetime.now(ZoneInfo("Asia/Shanghai")).date() + timedelta(days=1)).isoformat()
+        code, data = self._post(
+            "/api/fitness/record", {"kind": "weight", "weight_kg": 75, "logged_on": tomorrow}
+        )
+        self.assertEqual(code, 400)
+        self.assertIn("不能晚于今天", data["error"])
+        self.assertEqual(self._state()["fitness"]["weights"], [])
+
+    def test_corrupt_profile_degrades_instead_of_breaking_state(self) -> None:
+        memory = self.root / "memory"
+        memory.mkdir()
+        (memory / "training-profile.md").write_bytes(b"\xff\xfe\x00bad")
+
+        profile = self._state()["fitness"]["profile"]
+        self.assertFalse(profile["complete"])
+        self.assertEqual(profile["missing"], ["目标", "每周可练", "器械", "伤病"])
+
+    def test_invalid_profile_does_not_create_the_file(self) -> None:
+        profile_path = self.root / "memory" / "training-profile.md"
+        code, data = self._post(
+            "/api/fitness/record",
+            {"kind": "profile", "goal": "力量", "days_per_week": 0, "equipment": "健身房", "injuries": "无"},
+        )
+        self.assertEqual(code, 400)
+        self.assertFalse(profile_path.exists())
+        self.assertFalse(profile_path.parent.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -95,6 +95,13 @@ CREATE TABLE IF NOT EXISTS workout_sets (
     reps       INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_workout_sets_workout ON workout_sets(workout_id);
+
+CREATE TABLE IF NOT EXISTS weight_logs (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    logged_on TEXT NOT NULL UNIQUE,
+    weight_kg REAL NOT NULL,
+    is_demo   INTEGER NOT NULL DEFAULT 0
+);
 """
 
 # 旧库迁移：CREATE TABLE IF NOT EXISTS 不会补列，启动时按需 ALTER。
