@@ -250,11 +250,18 @@ function renderPending() {
   const box = $("#fx-pending");
   box.innerHTML = fxPending
     .map((ex, i) => {
+      const kind = ex.bodyweight ? "reps" : "kg";
+      const volume = ex.sets.reduce(
+        (sum, set) => sum + (ex.bodyweight
+          ? Number(set.reps || 0)
+          : Number(set.weight || 0) * Number(set.reps || 0)),
+        0,
+      );
       const rows = ex.sets
         .map((set, j) => {
           const weightInput = ex.bodyweight
             ? ""
-            : `<input type="number" data-ex="${i}" data-set="${j}" data-field="weight" value="${set.weight ?? ""}" min="0" max="500" step="0.5" inputmode="decimal" aria-label="第 ${j + 1} 组重量">`;
+            : `<input type="number" data-ex="${i}" data-set="${j}" data-field="weight" value="${set.weight ?? ""}" min="0" max="500" step="0.5" inputmode="decimal" aria-label="第 ${j + 1} 组重量"><span class="fx-unit">kg</span>`;
           return `<div class="fx-set">
             <span class="fx-set-no">${j + 1}</span>
             ${weightInput}
@@ -265,7 +272,11 @@ function renderPending() {
         })
         .join("");
       return `<article class="fx-item">
-        <div class="fx-item-head"><strong>${esc(ex.name)}</strong><button class="secondary" data-remove="${i}">移除</button></div>
+        <div class="fx-item-head">
+          <strong>${esc(ex.name)}</strong>
+          <span class="fx-summary muted">${ex.sets.length} 组 · ${fmtVolume(volume, kind)}</span>
+          <button class="secondary" data-remove="${i}" title="只从这次未保存的记录里移除">移除动作</button>
+        </div>
         ${rows}
       </article>`;
     })
