@@ -2,6 +2,7 @@
 
 > 状态：**草案 v0.1**，待你审阅 · 创建 2026-11-11 · 对应 [docs/lab1.md](../../docs/lab1.md) 的改编版
 > 本文是 `.scratch/growing-assistant/` 下的规格；tickets 会从第 9 节的里程碑拆出。
+> 健身功能（成长循环的第二个载体）见 [fitness spec](../fitness/spec.md)。
 
 ## 0. 已锁定的决策
 
