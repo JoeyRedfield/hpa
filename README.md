@@ -53,6 +53,21 @@ Lab 1 原文举例要求接南大 `smail` 邮箱和 `ehall` 办事大厅，我�
 
 实机跑通记录（真实 QQ 邮箱 + DeepSeek，2026-11-11）见 [docs/demo.md](docs/demo.md)。
 
+## 当前状态（2026-11-12）
+
+邮件链路已按我的要求暂停并关闭：`bin/hpa daemon` 与 `bin/hpa web` 都已停止，没有 launchd 服务会拉起它们；
+`state/hpa.sqlite3` 里留了 `paused=1`，即使以后误启动 daemon 也不会自动拉信。**数据都还在**
+（已同步邮件、待办、草稿、已发送记录、`outbox/` 归档、`.cache/kb.sqlite3` 索引），凭据仍在
+`~/.config/hpa/secrets.env`（不想留着可以直接删这个文件）。
+
+本地能力不受影响：`hpa index` / `hpa ask` / `hpa stats` / `hpa todos` / `hpa export` 都还能用。
+需要重新打开邮件链路时：
+
+```bash
+./bin/hpa resume
+caffeinate -i ./scripts/start-foreground.sh
+```
+
 ## 跑起来（当前形态）
 
 ```bash
