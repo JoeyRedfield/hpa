@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from . import kb, send, store
+from . import fitness, kb, send, store
 from .config import Config
 
 WEB_DIR = Path(__file__).parent / "web"
@@ -116,6 +116,7 @@ def state_payload(cfg: Config) -> dict:
         "drafts": drafts,
         "todos": todos,
         "corrections": corrections,
+        "fitness": fitness.state(cfg),
     }
 
 
@@ -320,6 +321,13 @@ class Handler(BaseHTTPRequestHandler):
             if not ok:
                 raise ValueError(f"待办 {todo_id} 不存在或状态没变化")
             return {"status": "done" if action == "done" else "open", "id": todo_id}
+        if path == "/api/fitness/record":
+            kind = str(payload.get("kind") or "workout")
+            if kind != "workout":
+                raise ValueError(f"未知记录类型：{kind}")
+            return fitness.record_workout(cfg, payload)
+        if len(parts) == 5 and parts[:3] == ["api", "fitness", "workouts"] and parts[4] == "delete":
+            return fitness.delete_workout(cfg, int(parts[3]), payload.get("confirm") is True)
         if path == "/api/sync":
             from . import mail
 

@@ -75,6 +75,26 @@ CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS workouts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    performed_on TEXT NOT NULL,
+    started_at   TEXT,
+    note         TEXT NOT NULL DEFAULT '',
+    is_demo      INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_workouts_performed ON workouts(performed_on);
+
+CREATE TABLE IF NOT EXISTS workout_sets (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    workout_id INTEGER NOT NULL,
+    exercise   TEXT NOT NULL,
+    set_index  INTEGER NOT NULL,
+    weight_kg  REAL,
+    reps       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_workout_sets_workout ON workout_sets(workout_id);
 """
 
 # 旧库迁移：CREATE TABLE IF NOT EXISTS 不会补列，启动时按需 ALTER。

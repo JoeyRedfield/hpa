@@ -16,6 +16,10 @@
 <header>
   <h1>个人助手</h1>
   <div id="statusbar" class="statusbar">载入中…</div>
+  <nav class="tabs" role="tablist" aria-label="功能">
+    <button id="tab-btn-mail" class="tab active" data-tab="mail" role="tab" aria-selected="true">邮件</button>
+    <button id="tab-btn-fitness" class="tab" data-tab="fitness" role="tab" aria-selected="false">健身</button>
+  </nav>
   <div class="controls">
     <button id="pause" class="secondary">暂停自动处理</button>
     <span id="paused-hint" class="muted" hidden>⏸ 已暂停：不再自动拉邮件 / 起草；手动刷新和确认仍可用</span>
@@ -23,26 +27,66 @@
 </header>
 
 <main>
-  <section>
-    <h2>待确认草稿 <span id="draft-count" class="pill">0</span></h2>
-    <p class="hint">只有你在这里点「确认发送」，外发才真的发生。发送后不可撤回。</p>
-    <div id="drafts"></div>
-    <div id="drafts-empty" class="empty" hidden>没有待确认的草稿。</div>
-  </section>
+  <div id="tab-mail" class="tab-panel">
+    <section>
+      <h2>待确认草稿 <span id="draft-count" class="pill">0</span></h2>
+      <p class="hint">只有你在这里点「确认发送」，外发才真的发生。发送后不可撤回。</p>
+      <div id="drafts"></div>
+      <div id="drafts-empty" class="empty" hidden>没有待确认的草稿。</div>
+    </section>
 
-  <section>
-    <h2>待办 <span id="todo-count" class="pill">0</span></h2>
-    <p class="hint">点左边的圆圈标记完成；做完了它会从这里消失，`bin/hpa todos open <id>` 可以撤回。</p>
-    <div id="todos"></div>
-    <div id="todos-empty" class="empty" hidden>没有未完成的待办。</div>
-  </section>
+    <section>
+      <h2>待办 <span id="todo-count" class="pill">0</span></h2>
+      <p class="hint">点左边的圆圈标记完成；做完了它会从这里消失，`bin/hpa todos open <id>` 可以撤回。</p>
+      <div id="todos"></div>
+      <div id="todos-empty" class="empty" hidden>没有未完成的待办。</div>
+    </section>
 
-  <section>
-    <h2>最近纠正</h2>
-    <p class="hint">在这里写下「哪里做错了」，它会进纠正日志，由成长循环固化成规则。</p>
-    <div id="corrections"></div>
-    <div id="corrections-empty" class="empty" hidden>还没有纠正记录。</div>
-  </section>
+    <section>
+      <h2>最近纠正</h2>
+      <p class="hint">在这里写下「哪里做错了」，它会进纠正日志，由成长循环固化成规则。</p>
+      <div id="corrections"></div>
+      <div id="corrections-empty" class="empty" hidden>还没有纠正记录。</div>
+    </section>
+  </div>
+
+  <div id="tab-fitness" class="tab-panel" hidden>
+    <section>
+      <h2>记录一次训练</h2>
+      <p class="hint">默认按「重量×次数×组数」填，展开后还能逐组改；自重动作只填次数。</p>
+      <div class="fitness-form">
+        <div class="fx-when">
+          <label class="fx-date">日期
+            <input type="date" id="fx-date">
+          </label>
+          <label class="fx-date">开始时间
+            <input type="time" id="fx-time">
+          </label>
+        </div>
+        <div class="fx-builder">
+          <select id="fx-exercise" aria-label="动作"></select>
+          <input id="fx-weight" type="number" inputmode="decimal" placeholder="重量 kg" min="0" max="500" step="0.5">
+          <input id="fx-reps" type="number" inputmode="numeric" placeholder="次数" min="1" max="100">
+          <input id="fx-sets" type="number" inputmode="numeric" placeholder="组数" min="1" max="20" value="5">
+          <button id="fx-add" class="primary">添加动作</button>
+        </div>
+        <div id="fx-pending"></div>
+        <label class="fx-note-label">备注（仅本机，不进模型）
+          <textarea id="fx-note" maxlength="500" rows="2"></textarea>
+        </label>
+        <div class="actions">
+          <button id="fx-save" class="primary">保存这次训练</button>
+          <button id="fx-clear" class="secondary">清空</button>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>最近</h2>
+      <div id="fitness-recent"></div>
+      <div id="fitness-recent-empty" class="empty" hidden>还没有训练记录。</div>
+    </section>
+  </div>
 </main>
 
 <footer>
