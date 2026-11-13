@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from . import fitness, kb, send, store
+from . import fitness, kb, llm, send, store
 from .config import Config
 
 WEB_DIR = Path(__file__).parent / "web"
@@ -321,6 +321,25 @@ class Handler(BaseHTTPRequestHandler):
             if not ok:
                 raise ValueError(f"待办 {todo_id} 不存在或状态没变化")
             return {"status": "done" if action == "done" else "open", "id": todo_id}
+        if path == "/api/fitness/parse":
+            text = str(payload.get("text") or "").strip()
+            if not text:
+                raise ValueError("请输入一句话")
+            if len(text) > 300:
+                raise ValueError("一句话最多 300 字")
+            try:
+                quick = fitness.parse_quick(text)
+            except ValueError as exc:
+                return {"parser": "none", "message": str(exc)}
+            if quick is not None:
+                return quick
+            try:
+                client = self.server.llm_factory(cfg)  # type: ignore[attr-defined]
+                return fitness.parse_with_llm(cfg, text, client)
+            except ValueError as exc:
+                return {"parser": "none", "message": str(exc)}
+            except Exception:  # noqa: BLE001 - 解析失败只降级，不影响其余接口
+                return {"parser": "none", "message": "没解析出来。请手动填下面的表单。"}
         if path == "/api/fitness/record":
             kind = str(payload.get("kind") or "workout")
             if kind == "workout":
@@ -367,7 +386,11 @@ def _login_hint() -> str:
 
 
 def make_server(
-    cfg: Config, host: str | None = None, port: int | None = None, token: str | None = None
+    cfg: Config,
+    host: str | None = None,
+    port: int | None = None,
+    token: str | None = None,
+    llm_factory=None,
 ) -> ThreadingHTTPServer:
     settings = load_web_settings(cfg)
     bind_host = host or settings.get("host", "127.0.0.1")
@@ -376,6 +399,7 @@ def make_server(
     server.cfg = cfg  # type: ignore[attr-defined]
     server.token = token or ensure_token(cfg)  # type: ignore[attr-defined]
     server.sender_factory = send.sender_from_env  # type: ignore[attr-defined]
+    server.llm_factory = llm_factory or llm.from_config  # type: ignore[attr-defined]
     return server
 
 

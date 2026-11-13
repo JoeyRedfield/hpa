@@ -177,6 +177,10 @@ footer { display: flex; align-items: center; gap: 0.8rem; padding: 0.5rem 1rem 1
   padding: 0.85rem 0.9rem;
 }
 .fx-when { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 0.6rem; }
+.fx-quick { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
+.fx-quick input { flex: 1; }
+.fx-quick button { white-space: nowrap; }
+.fitness-form .fx-quick + .hint { margin: 0 0 0.6rem; }
 .fx-date { display: block; flex: 1 1 9rem; font-size: 0.78rem; color: var(--muted); }
 .fx-date input { display: block; margin-top: 0.25rem; }
 .fitness-form input, .fitness-form select, .fitness-form textarea {

@@ -307,9 +307,47 @@ function addExercise() {
   $("#fx-weight").value = "";
 }
 
+async function parseQuick() {
+  const text = $("#fx-quick-text").value.trim();
+  if (!text) {
+    toast("先写一句话");
+    return;
+  }
+  if (fxPending.length && !confirm("替换当前未保存的动作？")) return;
+  let data;
+  try {
+    data = await api("/api/fitness/parse", { text });
+  } catch (e) {
+    toast(String(e.message || e), 5000);
+    return;
+  }
+  const hint = $("#fx-quick-hint");
+  hint.hidden = false;
+  if (data.parser === "none") {
+    fxPending = [];
+    renderPending();
+    hint.textContent = data.message || "没解析出来，请手动填下面的表单。";
+    return;
+  }
+  const draft = data.draft || {};
+  fxPending = (draft.exercises || []).map((ex) => ({
+    exercise: ex.exercise,
+    name: ex.name,
+    bodyweight: !!ex.bodyweight,
+    sets: (ex.sets || []).map((set) => ({ weight: set.weight_kg, reps: set.reps })),
+  }));
+  renderPending();
+  const uncertain = data.uncertain || [];
+  hint.textContent = uncertain.length
+    ? `已回填。不确定：${uncertain.join("、")}，请核对后保存。`
+    : "已回填，核对后保存。";
+  toast(data.parser === "llm" ? "已用模型解析，请核对" : "本地规则已回填");
+}
+
 function clearWorkoutForm() {
   fxPending = [];
   renderPending();
+  $("#fx-quick-hint").hidden = true;
   $("#fx-note").value = "";
   $("#fx-time").value = shanghaiNow().time;
 }
@@ -551,6 +589,10 @@ document.addEventListener("visibilitychange", () => {
 });
 
 $("#fx-add").addEventListener("click", addExercise);
+$("#fx-quick-parse").addEventListener("click", parseQuick);
+$("#fx-quick-text").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") parseQuick();
+});
 $("#fx-save").addEventListener("click", saveWorkout);
 $("#fx-clear").addEventListener("click", clearWorkoutForm);
 $("#fx-exercise").addEventListener("change", syncWeightInput);

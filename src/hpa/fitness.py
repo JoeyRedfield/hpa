@@ -11,7 +11,7 @@ from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import store
+from . import llm, store
 from .config import Config
 
 TZ = ZoneInfo("Asia/Shanghai")
@@ -118,6 +118,148 @@ def _sets(exercise: str, raw) -> list[tuple[int, float | None, int]]:
             weight = _weight(item["weight_kg"], name)
         rows.append((len(rows) + 1, weight, reps))
     return rows
+
+
+def _exercise_payload(exercise: str, raw_sets: list[dict]) -> dict:
+    name, _group, bodyweight = EXERCISES[exercise]
+    rows = _sets(exercise, raw_sets)
+    return {
+        "exercise": exercise,
+        "name": name,
+        "bodyweight": bodyweight,
+        "sets": [{"weight_kg": weight, "reps": reps} for _index, weight, reps in rows],
+    }
+
+
+# 快捷输入的动作别名；同一位置取最长匹配，避免「卧推」抢走「平板卧推」。
+_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("close_grip_bench", ("窄距卧推", "窄距", "窄推")),
+    ("bench_press", ("平板卧推", "卧推")),
+    ("hanging_leg_raise", ("悬挂举腿", "悬举腿")),
+    ("barbell_curl", ("二头弯举", "弯举")),
+    ("pull_up", ("引体向上", "引体")),
+    ("deadlift", ("硬拉",)),
+    ("squat", ("深蹲",)),
+)
+_WEIGHT_UNIT_RE = r"(\d+(?:\.\d+)?)\s*(?:kg|KG|公斤|千克)"
+_SETS_REPS_RE = r"(\d+)\s*组\s*[x×*]?\s*(\d+)\s*次"
+_REPS_SETS_RE = r"(\d+)\s*次\s*[x×*]?\s*(\d+)\s*组"
+_PAIR_RE = r"(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+(?:\.\d+)?)"
+_TRIPLE_RE = (
+    r"(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+(?:\.\d+)?)"
+)
+
+
+def _split_exercise(text: str) -> tuple[str, str] | None:
+    best: tuple[int, int, str, str] | None = None
+    for key, aliases in _ALIASES:
+        for alias in aliases:
+            index = text.find(alias)
+            if index < 0:
+                continue
+            candidate = (index, -len(alias), key, alias)
+            if best is None or candidate < best:
+                best = candidate
+    if best is None:
+        return None
+    index, _neg_len, key, alias = best
+    return key, (text[:index] + " " + text[index + len(alias) :]).strip()
+
+
+def _consume(pattern: str, text: str) -> tuple[re.Match[str] | None, str]:
+    match = re.search(pattern, text)
+    if match is None:
+        return None, text
+    return match, (text[: match.start()] + " " + text[match.end() :]).strip()
+
+
+def parse_quick(text: str) -> dict | None:
+    """本地解析一句话；没命中返回 None 交给模型，命中但数值非法抛 ValueError。不写库。"""
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    split = _split_exercise(raw)
+    if split is None:
+        return None
+    key, rest = split
+    name, _group, bodyweight = EXERCISES[key]
+
+    weight: float | None = None
+    match, rest = _consume(_WEIGHT_UNIT_RE, rest)
+    if match:
+        weight = float(match.group(1))
+
+    sets: int | None = None
+    reps: int | None = None
+    # 「80×5×5」是页面教的默认写法：重量×次数×组数。
+    if weight is None and not bodyweight:
+        match, rest = _consume(_TRIPLE_RE, rest)
+        if match:
+            raw_weight = float(match.group(1))
+            raw_reps = float(match.group(2))
+            raw_sets = float(match.group(3))
+            if not raw_reps.is_integer() or not raw_sets.is_integer():
+                raise ValueError(f"{name} 的次数和组数必须是整数")
+            weight, reps, sets = raw_weight, int(raw_reps), int(raw_sets)
+    if sets is None:
+        match, rest = _consume(_SETS_REPS_RE, rest)
+        if match:
+            sets, reps = int(match.group(1)), int(match.group(2))
+        else:
+            match, rest = _consume(_REPS_SETS_RE, rest)
+            if match:
+                reps, sets = int(match.group(1)), int(match.group(2))
+            else:
+                match, rest = _consume(_PAIR_RE, rest)
+                if match:
+                    first = float(match.group(1))
+                    second = float(match.group(2))
+                    if not first.is_integer() or not second.is_integer():
+                        raise ValueError(f"{name} 的次数和组数必须是整数")
+                    reps, sets = int(first), int(second)
+    if sets is None or reps is None:
+        return None
+
+    if weight is None and not bodyweight:
+        match, rest = _consume(r"(\d+(?:\.\d+)?)", rest)
+        if not match:
+            return None
+        weight = float(match.group(1))
+
+    if not 1 <= sets <= MAX_SETS:
+        raise ValueError(f"{name} 的组数应在 1–{MAX_SETS}")
+    exercise = _exercise_payload(
+        key, [{"weight_kg": weight, "reps": reps} for _ in range(sets)]
+    )
+
+    # 一句话里出现第二个动作时不要静默丢掉，交给模型整体解析。
+    if _split_exercise(rest) is not None:
+        return None
+
+    return {"parser": "rules", "draft": {"exercises": [exercise]}, "uncertain": []}
+
+
+def parse_with_llm(cfg: Config, text: str, client: llm.LLM) -> dict:
+    """模型兜底解析；结果按与服务端相同的规则校验。失败由调用方降级。"""
+    system = llm.load_prompt(cfg, "fitness-parse.md")
+    data = llm.parse_json(client.complete(system, text))
+    raw_exercises = data.get("exercises")
+    if not isinstance(raw_exercises, list) or not raw_exercises:
+        raise ValueError("模型没有返回动作")
+    exercises = []
+    for item in raw_exercises:
+        if not isinstance(item, dict) or item.get("exercise") not in EXERCISES:
+            raise ValueError("模型返回了未知动作")
+        key = item["exercise"]
+        exercises.append(_exercise_payload(key, item.get("sets")))
+    uncertain = data.get("uncertain") or []
+    if not isinstance(uncertain, list):
+        raise ValueError("模型返回的 uncertain 不是列表")
+    return {
+        "parser": "llm",
+        "draft": {"exercises": exercises},
+        "uncertain": [str(item)[:60] for item in uncertain if str(item).strip()][:10],
+    }
 
 
 def record_workout(cfg: Config, payload: dict) -> dict:

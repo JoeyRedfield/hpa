@@ -80,7 +80,7 @@ Status: ready-for-agent
 | `POST /api/fitness/correct` | `{note}` → 写 `corrections`（scope=fitness），返回「已记录，等固化」 |
 | `POST /api/fitness/workouts/<id>/delete` | `{confirm: true}`；删除一次训练及其组 |
 
-- 校验：动作必须在 7 个之内；重量 0–500 kg（自重为空）；次数 1–100；组数 1–20；日期不得晚于今天；备注长度上限（如 500 字）。
+- 校验：动作必须在 7 个之内；重量 0–500 kg（自重为空）；次数 1–100；组数 1–20；日期不得晚于今天；备注长度上限（如 500 字）；快捷输入上限 300 字。
 - 写接口一律要求 token（复用现有校验）；`GET /api/state` 同现有规则。
 
 ### 建议引擎

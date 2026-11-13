@@ -12,10 +12,23 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from hpa import store, web
+from hpa import llm, store, web
 from hpa.config import Config
 
 TOKEN = "test-token"
+
+
+class FakeLLM:
+    def __init__(self, reply: str = "", error: Exception | None = None) -> None:
+        self.reply = reply
+        self.error = error
+        self.calls: list[tuple[str, str]] = []
+
+    def complete(self, system: str, user: str) -> str:
+        self.calls.append((system, user))
+        if self.error is not None:
+            raise self.error
+        return self.reply
 
 
 def _today() -> str:
@@ -23,12 +36,20 @@ def _today() -> str:
 
 
 class FitnessWebCase(unittest.TestCase):
+    llm_factory = None
+
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
         (self.root / "vault").mkdir()
         self.cfg = Config(vault=self.root / "vault", project_root=self.root)
-        self.server = web.make_server(self.cfg, host="127.0.0.1", port=0, token=TOKEN)
+        self.server = web.make_server(
+            self.cfg,
+            host="127.0.0.1",
+            port=0,
+            token=TOKEN,
+            llm_factory=self.llm_factory,
+        )
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
@@ -327,6 +348,146 @@ class WeightAndProfileTest(FitnessWebCase):
         self.assertEqual(code, 400)
         self.assertFalse(profile_path.exists())
         self.assertFalse(profile_path.parent.exists())
+
+
+class QuickInputTest(FitnessWebCase):
+    def setUp(self) -> None:
+        self.fake = FakeLLM()
+        self.llm_factory = lambda cfg: self.fake
+        super().setUp()
+        prompts = self.root / "prompts"
+        prompts.mkdir()
+        source = Path(__file__).resolve().parents[1] / "prompts" / "fitness-parse.md"
+        (prompts / "fitness-parse.md").write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+
+    def _parse(self, text: str) -> tuple[int, dict]:
+        return self._post("/api/fitness/parse", {"text": text})
+
+    def test_local_squat_parses_without_model_or_write(self) -> None:
+        code, data = self._parse("深蹲 80kg 5组5次")
+        self.assertEqual(code, 200, data)
+        self.assertEqual(data["parser"], "rules")
+        self.assertEqual(data["uncertain"], [])
+        exercise = data["draft"]["exercises"][0]
+        self.assertEqual(exercise["exercise"], "squat")
+        self.assertEqual(len(exercise["sets"]), 5)
+        for item in exercise["sets"]:
+            self.assertEqual(item["weight_kg"], 80.0)
+            self.assertEqual(item["reps"], 5)
+        self.assertEqual(self.fake.calls, [])
+        self.assertEqual(self._state()["fitness"]["recent_workouts"], [])
+
+    def test_default_weight_reps_sets_shape_parses_locally(self) -> None:
+        code, data = self._parse("深蹲 80×5×5")
+        self.assertEqual(code, 200, data)
+        self.assertEqual(data["parser"], "rules")
+        exercise = data["draft"]["exercises"][0]
+        self.assertEqual(exercise["exercise"], "squat")
+        self.assertEqual(len(exercise["sets"]), 5)
+        for item in exercise["sets"]:
+            self.assertEqual(item["weight_kg"], 80.0)
+            self.assertEqual(item["reps"], 5)
+        self.assertEqual(self.fake.calls, [])
+
+    def test_local_common_spellings(self) -> None:
+        cases = [
+            ("平板卧推 60 5x5", "bench_press", 5, 60.0, 5),
+            ("引体 8x3", "pull_up", 3, None, 8),
+            ("硬拉 100kg 3×5", "deadlift", 5, 100.0, 3),
+            ("二头弯举 20 4组8次", "barbell_curl", 4, 20.0, 8),
+        ]
+        for text, key, sets, weight, reps in cases:
+            with self.subTest(text=text):
+                code, data = self._parse(text)
+                self.assertEqual(code, 200, data)
+                self.assertEqual(data["parser"], "rules", data)
+                exercise = data["draft"]["exercises"][0]
+                self.assertEqual(exercise["exercise"], key)
+                self.assertEqual(len(exercise["sets"]), sets)
+                for item in exercise["sets"]:
+                    self.assertEqual(item["weight_kg"], weight)
+                    self.assertEqual(item["reps"], reps)
+        self.assertEqual(self.fake.calls, [])
+
+    def test_local_invalid_value_reports_without_calling_model(self) -> None:
+        code, data = self._parse("深蹲 80kg 0组5次")
+        self.assertEqual(code, 200, data)
+        self.assertEqual(data["parser"], "none")
+        self.assertIn("组数", data["message"])
+        self.assertEqual(self.fake.calls, [])
+
+    def test_local_failure_falls_back_to_model(self) -> None:
+        self.fake.reply = json.dumps(
+            {
+                "exercises": [
+                    {"exercise": "squat", "sets": [{"weight_kg": 80, "reps": 5}] * 5}
+                ],
+                "uncertain": ["weight_kg"],
+            }
+        )
+        code, data = self._parse("昨天蹲了五组五次，大概八十公斤")
+        self.assertEqual(code, 200, data)
+        self.assertEqual(data["parser"], "llm")
+        self.assertEqual(data["uncertain"], ["weight_kg"])
+        self.assertEqual(len(data["draft"]["exercises"][0]["sets"]), 5)
+        self.assertEqual(len(self.fake.calls), 1)
+        system, user = self.fake.calls[0]
+        self.assertIn("bench_press", system)
+        self.assertIn("昨天蹲了五组五次", user)
+        self.assertEqual(self._state()["fitness"]["recent_workouts"], [])
+
+    def test_multiple_exercises_in_one_sentence_is_not_silently_dropped(self) -> None:
+        self.fake.reply = json.dumps(
+            {
+                "exercises": [
+                    {"exercise": "squat", "sets": [{"weight_kg": 80, "reps": 5}] * 5},
+                    {"exercise": "bench_press", "sets": [{"weight_kg": 60, "reps": 5}] * 5},
+                ],
+                "uncertain": [],
+            }
+        )
+        code, data = self._parse("深蹲 80kg 5组5次，平板卧推 60kg 5组5次")
+        self.assertEqual(code, 200, data)
+        self.assertEqual(data["parser"], "llm")
+        self.assertEqual([item["exercise"] for item in data["draft"]["exercises"]], ["squat", "bench_press"])
+
+    def test_model_error_returns_parser_none(self) -> None:
+        self.fake.error = llm.LLMError("缺少 LLM 密钥")
+        code, data = self._parse("昨天练了腿")
+        self.assertEqual(code, 200, data)
+        self.assertEqual(data["parser"], "none")
+        self.assertIn("手动", data["message"])
+        self.assertEqual(self._state()["fitness"]["recent_workouts"], [])
+
+    def test_bad_model_json_and_unknown_exercise_degrade(self) -> None:
+        for reply in (
+            "我觉得是深蹲",
+            json.dumps({"exercises": [{"exercise": "leg_press", "sets": []}], "uncertain": []}),
+        ):
+            with self.subTest(reply=reply):
+                self.fake.reply = reply
+                code, data = self._parse("昨天练了腿")
+                self.assertEqual(code, 200, data)
+                self.assertEqual(data["parser"], "none")
+
+    def test_empty_text_is_rejected(self) -> None:
+        code, data = self._parse("   ")
+        self.assertEqual(code, 400)
+        self.assertIn("请输入", data["error"])
+
+    def test_parsed_draft_saves_like_manual_entry(self) -> None:
+        code, parsed = self._parse("深蹲 80kg 5组5次")
+        self.assertEqual(code, 200, parsed)
+        exercise = parsed["draft"]["exercises"][0]
+        code, data = self._record(
+            [{"exercise": exercise["exercise"], "sets": exercise["sets"]}]
+        )
+        self.assertEqual(code, 200, data)
+        workout = self._state()["fitness"]["recent_workouts"][0]
+        self.assertEqual(workout["exercises"][0]["exercise"], "squat")
+        self.assertEqual(len(workout["exercises"][0]["sets"]), 5)
+        self.assertEqual(workout["exercises"][0]["volume"], 2000)
+        self.assertEqual(workout["exercises"][0]["volume_kind"], "kg")
 
 
 if __name__ == "__main__":
