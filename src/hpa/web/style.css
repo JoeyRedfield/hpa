@@ -262,3 +262,19 @@ footer { display: flex; align-items: center; gap: 0.8rem; padding: 0.5rem 1rem 1
   .fx-profile { grid-template-columns: 1fr; }
   .fx-weight-kg { width: 7.5rem; }
 }
+
+.fx-advice-bar { display: flex; align-items: center; gap: 0.7rem; margin-bottom: 0.6rem; }
+.fx-advice-meta { font-size: 0.75rem; color: var(--muted); margin: 0.2rem 0 0.6rem; }
+.fx-advice-item {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.75rem 0.9rem;
+  margin: 0.6rem 0;
+}
+.fx-advice-item h3 { margin: 0 0 0.35rem; font-size: 0.82rem; color: var(--accent); }
+.fx-advice-conclusion { margin: 0.15rem 0; font-weight: 600; }
+.fx-advice-evidence { margin: 0.15rem 0; font-size: 0.8rem; color: var(--muted); }
+.fx-advice-action { margin: 0.35rem 0 0; font-size: 0.82rem; }
+.fx-insufficient { margin: 0.5rem 0 0; padding-left: 1.1rem; font-size: 0.78rem; color: var(--muted); }
+.fx-insufficient li { margin: 0.2rem 0; }

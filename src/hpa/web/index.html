@@ -136,6 +136,16 @@
       <div id="fitness-recent"></div>
       <div id="fitness-recent-empty" class="empty" hidden>还没有训练记录。</div>
     </section>
+
+    <section>
+      <h2>建议</h2>
+      <p class="hint">只在你点按钮时生成，不推送、不排期；脚本先算数据，接入模型后只负责措辞。</p>
+      <div class="fx-advice-bar">
+        <button id="fx-advice" class="primary">给我建议</button>
+        <span id="fx-advice-status" class="muted" role="status" aria-live="polite"></span>
+      </div>
+      <div id="fx-advice-result" aria-live="polite"></div>
+    </section>
   </div>
 </main>
 

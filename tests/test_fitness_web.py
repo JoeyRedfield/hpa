@@ -490,5 +490,190 @@ class QuickInputTest(FitnessWebCase):
         self.assertEqual(workout["exercises"][0]["volume_kind"], "kg")
 
 
+class AdviceCase(FitnessWebCase):
+    def _seed(
+        self,
+        days_ago: int,
+        exercise: str,
+        weight: float,
+        reps: int,
+        sets: int,
+        note: str = "",
+    ) -> tuple[int, dict]:
+        day = (datetime.now(ZoneInfo("Asia/Shanghai")).date() - timedelta(days=days_ago)).isoformat()
+        return self._post(
+            "/api/fitness/record",
+            {
+                "kind": "workout",
+                "performed_on": day,
+                "started_at": "18:00",
+                "note": note,
+                "exercises": [
+                    {"exercise": exercise, "sets": [{"weight_kg": weight, "reps": reps}] * sets}
+                ],
+            },
+        )
+
+    def _profile(self, days_per_week: int = 3) -> None:
+        code, data = self._post(
+            "/api/fitness/record",
+            {
+                "kind": "profile",
+                "goal": "力量",
+                "days_per_week": days_per_week,
+                "equipment": "健身房",
+                "injuries": "无",
+            },
+        )
+        self.assertEqual(code, 200, data)
+
+    def _advice(self) -> tuple[int, dict]:
+        return self._post("/api/fitness/advice")
+
+class AdviceTest(AdviceCase):
+    def test_four_weeks_advice_has_evidence_and_persists(self) -> None:
+        self._profile(3)
+        for days_ago in (21, 14, 7, 0):
+            code, data = self._seed(days_ago, "squat", 80, 5, 5)
+            self.assertEqual(code, 200, data)
+
+        code, advice = self._advice()
+        self.assertEqual(code, 200, advice)
+        self.assertFalse(advice["llm_used"])
+        self.assertGreaterEqual(len(advice["items"]), 1)
+        self.assertLessEqual(len(advice["items"]), 3)
+        rules = {item["rule"] for item in advice["items"]}
+        self.assertIn("frequency", rules)
+        self.assertIn("stagnation", rules)
+        self.assertNotIn("volume", rules)
+
+        frequency = next(item for item in advice["items"] if item["rule"] == "frequency")
+        self.assertIn("3 次/周", frequency["evidence"])
+        stagnation = next(item for item in advice["items"] if item["rule"] == "stagnation")
+        self.assertIn("2.0t", stagnation["evidence"])
+        for item in advice["items"]:
+            self.assertTrue(item["workout_ids"])
+            self.assertTrue(any(char.isdigit() for char in item["evidence"]))
+            self.assertTrue(item["conclusion"])
+            self.assertTrue(item["action"])
+
+        state = self._state()["fitness"]
+        self.assertEqual(state["last_advice"]["generated_at"], advice["generated_at"])
+
+    def test_one_workout_is_insufficient_not_invented(self) -> None:
+        self._profile(3)
+        self._seed(0, "squat", 80, 5, 5)
+        code, advice = self._advice()
+        self.assertEqual(code, 200, advice)
+        self.assertEqual(advice["items"], [])
+        self.assertTrue(any("至少记录 2 天" in note for note in advice["insufficient"]))
+
+    def test_same_part_within_48h_flags_frequency(self) -> None:
+        self._profile(2)
+        self._seed(1, "bench_press", 60, 5, 5)
+        self._seed(0, "bench_press", 60, 5, 5)
+        code, advice = self._advice()
+        self.assertEqual(code, 200, advice)
+        frequency = next(item for item in advice["items"] if item["rule"] == "frequency")
+        self.assertIn("24", frequency["evidence"])
+        self.assertNotIn("画像目标", frequency["evidence"])
+
+    def test_same_part_after_48h_without_weekly_gap_has_no_frequency(self) -> None:
+        self._profile(2)
+        self._seed(3, "bench_press", 60, 5, 5)
+        self._seed(0, "bench_press", 60, 5, 5)
+        code, advice = self._advice()
+        self.assertEqual(code, 200, advice)
+        self.assertFalse(any(item["rule"] == "frequency" for item in advice["items"]))
+
+    def test_two_week_volume_decline_is_reported(self) -> None:
+        self._profile(3)
+        self._seed(21, "squat", 80, 5, 5)
+        self._seed(14, "squat", 80, 5, 5)
+        self._seed(7, "squat", 68, 5, 5)
+        self._seed(0, "squat", 56, 5, 5)
+        code, advice = self._advice()
+        self.assertEqual(code, 200, advice)
+        volume = next(item for item in advice["items"] if item["rule"] == "volume")
+        self.assertIn("1.4t", volume["evidence"])
+        self.assertIn("下降", volume["evidence"])
+
+    def test_flat_volume_is_left_to_stagnation(self) -> None:
+        self._profile(3)
+        for days_ago in (21, 14, 7, 0):
+            self._seed(days_ago, "squat", 80, 5, 5)
+        code, advice = self._advice()
+        self.assertEqual(code, 200, advice)
+        self.assertFalse(any(item["rule"] == "volume" for item in advice["items"]))
+
+    def test_body_weight_is_not_part_of_advice(self) -> None:
+        self._profile(3)
+        code, data = self._post(
+            "/api/fitness/record",
+            {"kind": "weight", "weight_kg": 77.3},
+        )
+        self.assertEqual(code, 200, data)
+        for days_ago in (21, 14, 7, 0):
+            self._seed(days_ago, "squat", 80, 5, 5)
+        code, advice = self._advice()
+        self.assertEqual(code, 200, advice)
+        self.assertNotIn("77.3", json.dumps(advice, ensure_ascii=False))
+
+    def test_notes_never_reach_advice(self) -> None:
+        self._profile(3)
+        for days_ago in (14, 7, 0):
+            self._seed(days_ago, "squat", 80, 5, 5, note="肩痛，别加重")
+        code, advice = self._advice()
+        self.assertEqual(code, 200, advice)
+        self.assertNotIn("肩痛", json.dumps(advice, ensure_ascii=False))
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class AdviceRegressionTest(AdviceCase):
+    def test_empty_current_week_does_not_make_an_item_without_ids(self) -> None:
+        self._profile(3)
+        for days_ago in (16, 12, 8):
+            self._seed(days_ago, "squat", 80, 5, 5)
+        code, advice = self._advice()
+        self.assertEqual(code, 200, advice)
+        self.assertFalse(any(item["rule"] == "frequency" for item in advice["items"]))
+        self.assertTrue(any("本周还没有训练记录" in note for note in advice["insufficient"]))
+
+    def test_single_week_spike_is_reported_even_if_previous_week_is_empty(self) -> None:
+        self._profile(3)
+        self._seed(8, "bench_press", 60, 5, 5)
+        self._seed(3, "bench_press", 60, 5, 5)
+        self._seed(0, "bench_press", 60, 5, 5)
+        code, advice = self._advice()
+        self.assertEqual(code, 200, advice)
+        volume = next(item for item in advice["items"] if item["rule"] == "volume")
+        self.assertIn("上升", volume["evidence"])
+
+    def test_stagnation_accepts_a_dip_and_recover_week(self) -> None:
+        self._profile(3)
+        self._seed(14, "squat", 100, 5, 5)
+        self._seed(7, "squat", 95, 5, 5)
+        self._seed(0, "squat", 100, 5, 5)
+        code, advice = self._advice()
+        self.assertEqual(code, 200, advice)
+        stagnation = next(item for item in advice["items"] if item["rule"] == "stagnation")
+        self.assertIn("没有提升", stagnation["evidence"])
+
+    def test_profile_gap_survives_many_exercise_notes(self) -> None:
+        exercises = [
+            {"exercise": key, "sets": [{"weight_kg": None if key in ("pull_up", "hanging_leg_raise") else 40, "reps": 5}] * 3}
+            for key in ("bench_press", "close_grip_bench", "pull_up", "barbell_curl", "hanging_leg_raise", "squat", "deadlift")
+        ]
+        for days_ago in (1, 0):
+            day = (datetime.now(ZoneInfo("Asia/Shanghai")).date() - timedelta(days=days_ago)).isoformat()
+            code, data = self._post(
+                "/api/fitness/record",
+                {"kind": "workout", "performed_on": day, "started_at": "18:00", "exercises": exercises},
+            )
+            self.assertEqual(code, 200, data)
+        code, advice = self._advice()
+        self.assertEqual(code, 200, advice)
+        self.assertTrue(any("训练画像还缺" in note for note in advice["insufficient"]))

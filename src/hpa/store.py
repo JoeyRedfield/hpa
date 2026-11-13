@@ -102,6 +102,13 @@ CREATE TABLE IF NOT EXISTS weight_logs (
     weight_kg REAL NOT NULL,
     is_demo   INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS advice_runs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    payload    TEXT NOT NULL,
+    llm_used   INTEGER NOT NULL DEFAULT 0
+);
 """
 
 # 旧库迁移：CREATE TABLE IF NOT EXISTS 不会补列，启动时按需 ALTER。

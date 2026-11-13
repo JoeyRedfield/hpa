@@ -527,6 +527,83 @@ async function saveProfile() {
   }
 }
 
+function renderAdvice(advice) {
+  const box = $("#fx-advice-result");
+  box.textContent = "";
+  if (!advice || !Array.isArray(advice.items)) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "还没有建议。点上面的按钮生成一次。";
+    box.appendChild(empty);
+    return;
+  }
+  const meta = document.createElement("p");
+  meta.className = "fx-advice-meta";
+  const when = advice.generated_at
+    ? new Date(advice.generated_at).toLocaleString("zh-CN", {
+        timeZone: "Asia/Shanghai",
+        hour12: false,
+      })
+    : "";
+  meta.textContent = `${when}${advice.llm_used ? " · 模型措辞" : " · 本地规则"}`;
+  box.appendChild(meta);
+
+  if (!advice.items.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "这次没有可执行的建议，原因见下。";
+    box.appendChild(empty);
+  }
+
+  const labels = { frequency: "频率", volume: "容量", stagnation: "停滞" };
+  for (const item of advice.items) {
+    const card = document.createElement("article");
+    card.className = "fx-advice-item";
+    const title = document.createElement("h3");
+    title.textContent = labels[item.rule] || item.rule;
+    card.appendChild(title);
+    for (const [field, className] of [
+      ["conclusion", "fx-advice-conclusion"],
+      ["evidence", "fx-advice-evidence"],
+      ["action", "fx-advice-action"],
+    ]) {
+      const line = document.createElement("p");
+      line.className = className;
+      line.textContent = field === "action" ? `→ ${item.action || ""}` : item[field] || "";
+      card.appendChild(line);
+    }
+    box.appendChild(card);
+  }
+
+  if (Array.isArray(advice.insufficient) && advice.insufficient.length) {
+    const list = document.createElement("ul");
+    list.className = "fx-insufficient";
+    for (const note of advice.insufficient) {
+      const item = document.createElement("li");
+      item.textContent = note;
+      list.appendChild(item);
+    }
+    box.appendChild(list);
+  }
+}
+
+async function generateAdvice() {
+  const button = $("#fx-advice");
+  const status = $("#fx-advice-status");
+  button.disabled = true;
+  status.textContent = "生成中…";
+  try {
+    const advice = await api("/api/fitness/advice", {});
+    renderAdvice(advice);
+    toast("建议已生成");
+  } catch (e) {
+    toast(String(e.message || e), 5000);
+  } finally {
+    button.disabled = false;
+    status.textContent = "";
+  }
+}
+
 function renderFitness(fitness) {
   fxCatalog = fitness.exercises || [];
   renderExerciseOptions();
@@ -537,6 +614,7 @@ function renderFitness(fitness) {
   renderWeights(fitness.weights || []);
   renderProfile(fitness.profile || {});
   renderRecent(fitness.recent_workouts || []);
+  renderAdvice(fitness.last_advice || null);
 }
 
 async function loadState() {
@@ -597,6 +675,7 @@ $("#fx-save").addEventListener("click", saveWorkout);
 $("#fx-clear").addEventListener("click", clearWorkoutForm);
 $("#fx-exercise").addEventListener("change", syncWeightInput);
 $("#fx-weight-save").addEventListener("click", saveWeight);
+$("#fx-advice").addEventListener("click", generateAdvice);
 $("#fx-weight-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") saveWeight();
 });

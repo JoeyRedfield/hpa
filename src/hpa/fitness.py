@@ -5,9 +5,10 @@ v1 只支持 7 个固定动作；组按行存，容量由这里计算，UI 不�
 
 from __future__ import annotations
 
+import json
 import os
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -522,11 +523,403 @@ def _recent_weights(conn, limit: int = 30) -> list[dict]:
     ]
 
 
+PART_NAMES = {"chest": "胸", "back": "背", "biceps": "二头", "legs": "腿", "core": "核心"}
+_PART_ORDER = tuple(dict.fromkeys(spec[1] for spec in EXERCISES.values()))
+_RULE_ORDER = {"frequency": 0, "volume": 1, "stagnation": 2}
+
+
+def _buckets(today: date) -> list[dict]:
+    labels = ("3 周前", "2 周前", "上周", "本周至今")
+    return [
+        {
+            "start": today - timedelta(days=27 - 7 * index),
+            "end": today - timedelta(days=21 - 7 * index),
+            "label": labels[index],
+        }
+        for index in range(4)
+    ]
+
+
+def _bucket_index(day: date, today: date) -> int | None:
+    age = (today - day).days
+    if age < 0 or age > 27:
+        return None
+    return 3 - age // 7
+
+
+def _session_datetime(workout: dict) -> datetime:
+    started = workout.get("started_at") or "00:00"
+    try:
+        hour, minute = (int(part) for part in started.split(":"))
+    except (TypeError, ValueError):
+        hour, minute = 0, 0
+    if not (0 <= hour < 24 and 0 <= minute < 60):
+        hour, minute = 0, 0
+    return datetime(
+        workout["day"].year, workout["day"].month, workout["day"].day, hour, minute, tzinfo=TZ
+    )
+
+
+def _short(day: date) -> str:
+    return day.strftime("%m-%d")
+
+
+def _hours_text(hours: float) -> str:
+    return f"{int(hours * 10) / 10:g}"
+
+
+def _volume_text(value: float, bodyweight: bool) -> str:
+    if bodyweight:
+        return f"{value:.0f} 次"
+    if value >= 1000:
+        return f"{value / 1000:.1f}t"
+    return f"{value:.0f}kg"
+
+
+def _best_text(value: float, bodyweight: bool) -> str:
+    return f"{value:.0f} 次" if bodyweight else f"{value:.1f}kg"
+
+
+def _series(name: str, values: list[float], bodyweight: bool, span: str = "") -> str:
+    return f"{name} 周容量{span}：" + " → ".join(
+        _volume_text(value, bodyweight) for value in values
+    )
+
+
+def _span(buckets: list[dict]) -> str:
+    return f"（{_short(buckets[0]['start'])}–{_short(buckets[-1]['end'])}，按周）"
+
+
+def _window_workouts(conn, today: date) -> list[dict]:
+    start = today - timedelta(days=27)
+    rows = conn.execute(
+        "SELECT id, performed_on, started_at FROM workouts "
+        "WHERE performed_on BETWEEN ? AND ? ORDER BY performed_on, id",
+        (start.isoformat(), today.isoformat()),
+    ).fetchall()
+    workouts: list[dict] = []
+    for row in rows:
+        try:
+            day = date.fromisoformat(row["performed_on"])
+        except ValueError:
+            continue
+        sets = conn.execute(
+            "SELECT exercise, weight_kg, reps FROM workout_sets "
+            "WHERE workout_id = ? ORDER BY set_index",
+            (row["id"],),
+        ).fetchall()
+        grouped: dict[str, list[tuple[float | None, int]]] = {}
+        for item in sets:
+            if item["exercise"] in EXERCISES:
+                grouped.setdefault(item["exercise"], []).append(
+                    (item["weight_kg"], item["reps"])
+                )
+        if grouped:
+            workouts.append(
+                {"id": row["id"], "day": day, "started_at": row["started_at"], "sets": grouped}
+            )
+    return workouts
+
+
+def _stats(workouts: list[dict], today: date) -> dict[str, dict]:
+    stats = {
+        key: {"volumes": [0.0] * 4, "bests": [0.0] * 4, "sessions": [0] * 4, "ids": [[], [], [], []]}
+        for key in EXERCISES
+    }
+    for workout in workouts:
+        index = _bucket_index(workout["day"], today)
+        if index is None:
+            continue
+        for key, rows in workout["sets"].items():
+            _name, _group, bodyweight = EXERCISES[key]
+            volume = sum(
+                (reps if bodyweight else float(weight or 0) * reps) for weight, reps in rows
+            )
+            best = max(
+                (reps if bodyweight else float(weight or 0) * (1 + reps / 30))
+                for weight, reps in rows
+            )
+            entry = stats[key]
+            entry["volumes"][index] += volume
+            entry["bests"][index] = max(entry["bests"][index], best)
+            entry["sessions"][index] += 1
+            entry["ids"][index].append(workout["id"])
+    return stats
+
+
+def _frequency_candidate(
+    workouts: list[dict], training_days: list[date], profile: dict, buckets: list[dict]
+) -> tuple[dict | None, str | None]:
+    part_sessions: dict[str, list[tuple[datetime, date, int]]] = {}
+    for workout in workouts:
+        moment = _session_datetime(workout)
+        present = {EXERCISES[key][1] for key in workout["sets"]}
+        for part in _PART_ORDER:
+            if part in present:
+                part_sessions.setdefault(part, []).append(
+                    (moment, workout["day"], workout["id"])
+                )
+
+    best: tuple[tuple[float, float, int], float, str, tuple, tuple] | None = None
+    for part, sessions in part_sessions.items():
+        sessions.sort(key=lambda item: item[0])
+        for left, right in zip(sessions, sessions[1:]):
+            hours = (right[0] - left[0]).total_seconds() / 3600
+            if 0 <= hours < 48:
+                rank = (-right[0].timestamp(), hours, _PART_ORDER.index(part))
+                if best is None or rank < best[0]:
+                    best = (rank, hours, part, left, right)
+
+    if best is not None:
+        _rank, hours, part, left, right = best
+        part_cn = PART_NAMES[part]
+        return (
+            {
+                "rule": "frequency",
+                "conclusion": f"{part_cn}的两次训练间隔太近。",
+                "evidence": (
+                    f"{part_cn}：{_short(left[1])} 与 {_short(right[1])} "
+                    f"相隔 {_hours_text(hours)} 小时（< 48h）。"
+                ),
+                "action": f"把{part_cn}的两次训练隔开至少两天。",
+                "workout_ids": [left[2], right[2]],
+                "_score": 90,
+            },
+            None,
+        )
+
+    target = profile.get("days_per_week")
+    if not target:
+        return None, "训练画像缺「每周可练」，暂时无法判断频率是否合适。"
+    current = buckets[3]
+    ids = [
+        workout["id"]
+        for workout in workouts
+        if current["start"] <= workout["day"] <= current["end"]
+    ]
+    count = sum(1 for day in training_days if current["start"] <= day <= current["end"])
+    if count == 0:
+        return None, "本周还没有训练记录，先恢复一次再评估频率。"
+    if count < target:
+        return (
+            {
+                "rule": "frequency",
+                "conclusion": "最近一周训练次数低于画像目标。",
+                "evidence": (
+                    f"本周至今（{_short(current['start'])}–{_short(current['end'])}）"
+                    f" {count} 次，画像目标 {target} 次/周。"
+                ),
+                "action": "下周先补到目标次数，优先安排一次全身或下肢。",
+                "workout_ids": ids,
+                "_score": 70 + min(20, (target - count) * 10),
+            },
+            None,
+        )
+    if count > target + 1:
+        return (
+            {
+                "rule": "frequency",
+                "conclusion": "最近一周训练次数高于画像目标。",
+                "evidence": (
+                    f"本周至今（{_short(current['start'])}–{_short(current['end'])}）"
+                    f" {count} 次，画像目标 {target} 次/周。"
+                ),
+                "action": "留出至少一天完全休息，避免连续高强度。",
+                "workout_ids": ids,
+                "_score": 60,
+            },
+            None,
+        )
+    return None, None
+
+
+def _volume_candidate(stats: dict[str, dict], buckets: list[dict]) -> dict | None:
+    candidates: list[dict] = []
+    for key, entry in stats.items():
+        name, _group, bodyweight = EXERCISES[key]
+        volumes = entry["volumes"]
+        v1, v2, v3 = volumes[1], volumes[2], volumes[3]
+        ids = [item for bucket in entry["ids"] for item in bucket]
+        if v1 > 0 and v2 > 0 and v3 > 0 and v2 < v1 * 0.9 and v3 < v2 * 0.9:
+            reason = "连续两周下降 >10%"
+            score = 80 + min(15, (v1 - v3) / v1 * 50)
+        else:
+            spike = None
+            for before, after in ((v1, v2), (v2, v3)):
+                if before > 0 and after > before * 1.3:
+                    ratio = after / before
+                    if spike is None or ratio > spike:
+                        spike = ratio
+            if spike is None:
+                continue
+            reason = "单周上升 >30%"
+            score = 70 + min(15, (spike - 1) * 30)
+        candidates.append(
+            {
+                "rule": "volume",
+                "exercise": key,
+                "conclusion": (
+                    f"{name}的周容量在下降。" if reason.startswith("连续") else f"{name}的周容量单周涨得太多。"
+                ),
+                "evidence": (
+                    f"{_series(name, volumes, bodyweight, _span(buckets))}（{reason}）。"
+                ),
+                "action": (
+                    f"下次{name}先减一组，把动作质量拉回来；容量回到下降前再谈加重。"
+                    if reason.startswith("连续")
+                    else "下周先保持同样重量，别继续加量，观察恢复。"
+                ),
+                "workout_ids": ids,
+                "_score": score,
+            }
+        )
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: (item["_score"], len(item["workout_ids"])))
+
+
+def _stagnation_candidate(
+    stats: dict[str, dict], skip: set[str], buckets: list[dict]
+) -> dict | None:
+    candidates: list[dict] = []
+    for key, entry in stats.items():
+        if key in skip:
+            continue
+        sessions = entry["sessions"]
+        if sum(sessions[1:4]) < 3:
+            continue
+        present = [index for index in (1, 2, 3) if sessions[index] > 0]
+        if len(present) < 2:
+            continue
+        name, _group, bodyweight = EXERCISES[key]
+        bests = entry["bests"]
+        volumes = entry["volumes"]
+        baseline = present[0]
+        later = present[1:]
+        if max(bests[index] for index in later) > bests[baseline]:
+            continue
+        if max(volumes[index] for index in later) > volumes[baseline] * 1.05:
+            continue
+        ids = [item for index in present for item in entry["ids"][index]]
+        candidates.append(
+            {
+                "rule": "stagnation",
+                "exercise": key,
+                "conclusion": f"{name}最近三周没有明显进步。",
+                "evidence": (
+                    f"{name} 最近 3 周最好一组 {_best_text(max(bests[1:4]), bodyweight)} 没有提升；"
+                    f"{_series(name, volumes[1:], bodyweight, _span(buckets[1:]))}。"
+                ),
+                "action": f"下次{name}保持重量，把最后一组多做一次；连续两周仍无变化再考虑减量。",
+                "workout_ids": ids,
+                "_score": 60 + min(20, sum(sessions) * 5),
+                "total": sum(volumes),
+                "bodyweight": bodyweight,
+            }
+        )
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda item: (item["_score"], not item["bodyweight"], item["total"]),
+    )
+
+
+def _build_advice(workouts: list[dict], profile: dict, today: date) -> dict:
+    buckets = _buckets(today)
+    training_days = sorted({workout["day"] for workout in workouts})
+    stats = _stats(workouts, today)
+    items: list[dict] = []
+    insufficient: list[str] = []
+
+    if len(training_days) < 2:
+        insufficient.append("至少记录 2 天训练，才能给出频率或趋势建议。")
+    else:
+        frequency, reason = _frequency_candidate(workouts, training_days, profile, buckets)
+        if reason:
+            insufficient.append(reason)
+        if frequency:
+            items.append(frequency)
+        volume = _volume_candidate(stats, buckets)
+        skip: set[str] = set()
+        if volume:
+            items.append(volume)
+            skip.add(volume["exercise"])
+        stagnation = _stagnation_candidate(stats, skip, buckets)
+        if stagnation:
+            items.append(stagnation)
+
+    for key, entry in stats.items():
+        total = sum(entry["sessions"])
+        if 0 < total < 3:
+            insufficient.append(
+                f"{EXERCISES[key][0]} 只练了 {total} 次，再记 {3 - total} 次才能判断是否停滞。"
+            )
+    if profile["missing"]:
+        insufficient.append("训练画像还缺：" + "、".join(profile["missing"]) + "。")
+    if not items and len(training_days) >= 2:
+        insufficient.append("目前没有发现需要调整的地方；保持记录，过两周再看。")
+
+    items.sort(key=lambda item: (-item["_score"], _RULE_ORDER[item["rule"]]))
+    for item in items:
+        item.pop("_score", None)
+        item.pop("exercise", None)
+        item.pop("total", None)
+        item.pop("bodyweight", None)
+
+    seen: set[str] = set()
+    unique: list[str] = []
+    for note in insufficient:
+        if note not in seen:
+            seen.add(note)
+            unique.append(note)
+    return {
+        "generated_at": datetime.now(TZ).isoformat(timespec="seconds"),
+        "llm_used": False,
+        "items": items[:3],
+        "insufficient": unique,
+    }
+
+
+def _last_advice(conn) -> dict | None:
+    row = conn.execute(
+        "SELECT payload FROM advice_runs ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        return json.loads(row["payload"])
+    except (TypeError, ValueError):
+        return None
+
+
+def generate_advice(cfg: Config) -> dict:
+    today = date.fromisoformat(local_today())
+    profile = read_profile(cfg)
+    conn = store.connect(cfg)
+    try:
+        workouts = _window_workouts(conn, today)
+        payload = _build_advice(workouts, profile, today)
+        conn.execute(
+            "INSERT INTO advice_runs(created_at, payload, llm_used) VALUES (?, ?, 0)",
+            (payload["generated_at"], json.dumps(payload, ensure_ascii=False)),
+        )
+        conn.execute(
+            "DELETE FROM advice_runs WHERE id NOT IN "
+            "(SELECT id FROM advice_runs ORDER BY id DESC LIMIT 20)"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return payload
+
+
 def state(cfg: Config) -> dict:
     conn = store.connect(cfg)
     try:
         recent = _recent_workouts(conn)
         weights = _recent_weights(conn)
+        last_advice = _last_advice(conn)
     finally:
         conn.close()
     return {
@@ -534,4 +927,5 @@ def state(cfg: Config) -> dict:
         "recent_workouts": recent,
         "weights": weights,
         "profile": read_profile(cfg),
+        "last_advice": last_advice,
     }

@@ -340,6 +340,8 @@ class Handler(BaseHTTPRequestHandler):
                 return {"parser": "none", "message": str(exc)}
             except Exception:  # noqa: BLE001 - 解析失败只降级，不影响其余接口
                 return {"parser": "none", "message": "没解析出来。请手动填下面的表单。"}
+        if path == "/api/fitness/advice":
+            return fitness.generate_advice(cfg)
         if path == "/api/fitness/record":
             kind = str(payload.get("kind") or "workout")
             if kind == "workout":
