@@ -35,6 +35,10 @@ def _today() -> str:
     return datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
 
 
+def _no_llm(cfg):
+    raise llm.LLMError("no key")
+
+
 class FitnessWebCase(unittest.TestCase):
     llm_factory = None
 
@@ -491,6 +495,8 @@ class QuickInputTest(FitnessWebCase):
 
 
 class AdviceCase(FitnessWebCase):
+    llm_factory = staticmethod(_no_llm)
+
     def _seed(
         self,
         days_ago: int,
@@ -677,3 +683,157 @@ class AdviceRegressionTest(AdviceCase):
         code, advice = self._advice()
         self.assertEqual(code, 200, advice)
         self.assertTrue(any("训练画像还缺" in note for note in advice["insufficient"]))
+
+
+class WordingTest(AdviceCase):
+    def setUp(self) -> None:
+        self.client = FakeLLM()
+        self.llm_factory = lambda cfg: self.client
+        super().setUp()
+        (self.root / "rules").mkdir()
+        (self.root / "rules" / "fitness-advice.md").write_text(
+            "健身建议规则：优先频率，其次容量，最后停滞。\n", encoding="utf-8"
+        )
+        (self.root / "prompts").mkdir()
+        (self.root / "prompts" / "fitness-advice.md").write_text(
+            "只输出 JSON。\n", encoding="utf-8"
+        )
+
+    def _weeks(self, note: str = "") -> None:
+        self._profile(3)
+        for days_ago in (21, 14, 7, 0):
+            code, data = self._seed(days_ago, "squat", 80, 5, 5, note=note)
+            self.assertEqual(code, 200, data)
+
+    def _baseline(self) -> dict:
+        original = self.server.llm_factory
+
+        def no_key(cfg):
+            raise llm.LLMError("no key")
+
+        self.server.llm_factory = no_key
+        try:
+            code, advice = self._advice()
+        finally:
+            self.server.llm_factory = original
+        self.assertEqual(code, 200, advice)
+        return advice
+
+    def _reply(self, order: list[str], texts: dict[str, tuple[str, str]]) -> None:
+        payload = {
+            "order": order,
+            "texts": {
+                rule: {"conclusion": conclusion, "action": action}
+                for rule, (conclusion, action) in texts.items()
+            },
+        }
+        self.client.reply = json.dumps(payload, ensure_ascii=False)
+
+    def test_model_reorders_and_rewrites_but_evidence_is_unchanged(self) -> None:
+        self._weeks(note="肩痛，别加重")
+        baseline = self._baseline()
+        self._reply(
+            ["stagnation", "frequency"],
+            {
+                "stagnation": ("深蹲最近没有进步。", "下次保持重量，多做一次。"),
+                "frequency": ("这周练得少了些。", "下周补一次全身训练。"),
+            },
+        )
+        code, advice = self._advice()
+        self.assertEqual(code, 200, advice)
+        self.assertTrue(advice["llm_used"])
+        self.assertEqual([item["rule"] for item in advice["items"]], ["stagnation", "frequency"])
+        base_evidence = {item["rule"]: item["evidence"] for item in baseline["items"]}
+        for item in advice["items"]:
+            self.assertEqual(item["evidence"], base_evidence[item["rule"]])
+        self.assertEqual(advice["items"][0]["conclusion"], "深蹲最近没有进步。")
+        last = self._state()["fitness"]["last_advice"]
+        self.assertTrue(last["llm_used"])
+        self.assertEqual(last["items"][0]["rule"], "stagnation")
+
+        system, user = self.client.calls[-1]
+        self.assertIn("健身建议规则", user)
+        self.assertIn("力量", user)
+        self.assertIn("2.0t", user)
+        self.assertNotIn("肩痛", system + user)
+        context = json.loads(user)
+        self.assertEqual(len(context["summary"]), 1)
+        self.assertEqual(context["summary"][0]["exercise"], "深蹲")
+        self.assertEqual(len(context["summary"][0]["weeks"]), 4)
+
+    def test_real_prompt_documents_order_and_texts(self) -> None:
+        prompt = (
+            Path(__file__).resolve().parents[1] / "prompts" / "fitness-advice.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"order"', prompt)
+        self.assertIn('"texts"', prompt)
+
+    def test_model_can_sort_without_rewriting(self) -> None:
+        self._weeks()
+        self._reply(["stagnation", "frequency"], {})
+        code, advice = self._advice()
+        self.assertEqual(code, 200, advice)
+        self.assertTrue(advice["llm_used"])
+        self.assertEqual([item["rule"] for item in advice["items"]], ["stagnation", "frequency"])
+
+    def test_incomplete_order_falls_back_to_script_order_but_keeps_texts(self) -> None:
+        self._weeks()
+        baseline = self._baseline()
+        self._reply(
+            ["stagnation"],
+            {"stagnation": ("深蹲最近没有进步。", "下次保持重量。")},
+        )
+        code, advice = self._advice()
+        self.assertEqual(code, 200, advice)
+        self.assertTrue(advice["llm_used"])
+        self.assertEqual([item["rule"] for item in advice["items"]], ["frequency", "stagnation"])
+        base_texts = {
+            item["rule"]: (item["conclusion"], item["action"]) for item in baseline["items"]
+        }
+        self.assertEqual(
+            (advice["items"][0]["conclusion"], advice["items"][0]["action"]),
+            base_texts["frequency"],
+        )
+        self.assertEqual(advice["items"][1]["conclusion"], "深蹲最近没有进步。")
+
+    def test_unknown_text_key_falls_back_to_templates(self) -> None:
+        self._weeks()
+        baseline = self._baseline()
+        self._reply(
+            ["frequency", "stagnation"],
+            {"unknown": ("不该出现。", "忽略。")},
+        )
+        code, advice = self._advice()
+        self.assertEqual(code, 200, advice)
+        self.assertFalse(advice["llm_used"])
+        self.assertEqual([item["rule"] for item in advice["items"]], ["frequency", "stagnation"])
+        base_texts = {
+            item["rule"]: (item["conclusion"], item["action"]) for item in baseline["items"]
+        }
+        for item in advice["items"]:
+            self.assertEqual((item["conclusion"], item["action"]), base_texts[item["rule"]])
+
+    def test_digits_in_model_text_fall_back_entirely(self) -> None:
+        self._weeks()
+        baseline = self._baseline()
+        self._reply(
+            ["frequency", "stagnation"],
+            {"frequency": ("这周只有 1 次。", "下周补一次。")},
+        )
+        code, advice = self._advice()
+        self.assertEqual(code, 200, advice)
+        self.assertFalse(advice["llm_used"])
+        self.assertEqual(
+            [(item["conclusion"], item["action"]) for item in advice["items"]],
+            [(item["conclusion"], item["action"]) for item in baseline["items"]],
+        )
+
+    def test_model_error_behaves_like_deterministic_advice(self) -> None:
+        self._weeks()
+        baseline = self._baseline()
+        self.client.error = llm.LLMError("network down")
+        code, advice = self._advice()
+        self.assertEqual(code, 200, advice)
+        self.assertFalse(advice["llm_used"])
+        self.assertEqual(advice["items"], baseline["items"])
+        self.assertEqual(advice["insufficient"], baseline["insufficient"])

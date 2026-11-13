@@ -893,16 +893,133 @@ def _last_advice(conn) -> dict | None:
         return None
 
 
-def generate_advice(cfg: Config) -> dict:
+def _advice_rules(cfg: Config) -> str:
+    path = cfg.project_root / "rules" / "fitness-advice.md"
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _training_summary(workouts: list[dict], today: date) -> list[dict]:
+    buckets = _buckets(today)
+    stats = _stats(workouts, today)
+    summary = []
+    for key, entry in stats.items():
+        if sum(entry["sessions"]) == 0:
+            continue
+        name, _group, bodyweight = EXERCISES[key]
+        summary.append(
+            {
+                "exercise": name,
+                "bodyweight": bodyweight,
+                "weeks": [
+                    {
+                        "label": bucket["label"],
+                        "sessions": entry["sessions"][index],
+                        "volume": _volume_text(entry["volumes"][index], bodyweight),
+                        "best": _best_text(entry["bests"][index], bodyweight),
+                    }
+                    for index, bucket in enumerate(buckets)
+                ],
+            }
+        )
+    return summary
+
+
+def _wording_context(
+    payload: dict, profile: dict, cfg: Config, workouts: list[dict], today: date
+) -> str:
+    data = {
+        "rules": _advice_rules(cfg),
+        "profile": {
+            "goal": profile.get("goal", ""),
+            "days_per_week": profile.get("days_per_week"),
+            "equipment": profile.get("equipment", ""),
+            "injuries": profile.get("injuries", ""),
+        },
+        "summary": _training_summary(workouts, today),
+        "candidates": [
+            {"rule": item["rule"], "evidence": item["evidence"]}
+            for item in payload["items"]
+        ],
+    }
+    return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+def _apply_wording(
+    payload: dict,
+    profile: dict,
+    cfg: Config,
+    client: llm.LLM,
+    workouts: list[dict],
+    today: date,
+) -> dict:
+    try:
+        system = llm.load_prompt(cfg, "fitness-advice.md")
+        raw = client.complete(
+            system, _wording_context(payload, profile, cfg, workouts, today)
+        )
+        data = llm.parse_json(raw)
+        order = data.get("order")
+        raw_texts = data.get("texts")
+        if not isinstance(order, list) or not isinstance(raw_texts, dict):
+            return payload
+
+        rules = [item["rule"] for item in payload["items"]]
+        by_rule = {item["rule"]: item for item in payload["items"]}
+        valid_order = (
+            len(order) == len(rules)
+            and all(isinstance(rule, str) for rule in order)
+            and len(set(order)) == len(order)
+            and set(order) == set(rules)
+        )
+
+        texts: dict[str, tuple[str, str]] = {}
+        for rule, entry in raw_texts.items():
+            if rule not in by_rule or not isinstance(entry, dict):
+                return payload
+            conclusion = entry.get("conclusion")
+            action = entry.get("action")
+            if (
+                not isinstance(conclusion, str)
+                or not isinstance(action, str)
+                or not conclusion.strip()
+                or not action.strip()
+            ):
+                return payload
+            # 只拦阿拉伯数字；中文数词（如「多做一次」）是自然语言，模板本身也这么写。
+            if any(char.isdigit() for char in conclusion + action):
+                return payload
+            texts[rule] = (conclusion.strip(), action.strip())
+
+        ordered: list[dict] = []
+        for rule in order if valid_order else rules:
+            item = dict(by_rule[rule])
+            if rule in texts:
+                item["conclusion"], item["action"] = texts[rule]
+            ordered.append(item)
+        return {**payload, "llm_used": bool(texts) or valid_order, "items": ordered}
+    except Exception:  # noqa: BLE001 - 模型失败只降级，不影响确定性建议
+        return payload
+
+
+def generate_advice(cfg: Config, client: llm.LLM | None = None) -> dict:
     today = date.fromisoformat(local_today())
     profile = read_profile(cfg)
     conn = store.connect(cfg)
     try:
         workouts = _window_workouts(conn, today)
         payload = _build_advice(workouts, profile, today)
+        if client is not None and payload["items"]:
+            payload = _apply_wording(payload, profile, cfg, client, workouts, today)
         conn.execute(
-            "INSERT INTO advice_runs(created_at, payload, llm_used) VALUES (?, ?, 0)",
-            (payload["generated_at"], json.dumps(payload, ensure_ascii=False)),
+            "INSERT INTO advice_runs(created_at, payload, llm_used) VALUES (?, ?, ?)",
+            (
+                payload["generated_at"],
+                json.dumps(payload, ensure_ascii=False),
+                int(bool(payload["llm_used"])),
+            ),
         )
         conn.execute(
             "DELETE FROM advice_runs WHERE id NOT IN "
