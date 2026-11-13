@@ -49,6 +49,7 @@ class Proposal:
     sample_expected: str = ""
     key: str = ""
     value: str = ""
+    rule_text: str = ""
 
 
 @dataclass
@@ -158,6 +159,7 @@ def _propose_fitness(cfg: Config, llm: LLM, correction: dict) -> Proposal:
             why=why,
             key=key,
             value=value,
+            rule_text=str(data.get("rule", "")).strip(),
         )
     raise GrowthError(f"模型给了不认识的健身目标：{target}")
 
@@ -191,7 +193,15 @@ def propose(cfg: Config, llm: LLM, correction: dict) -> Proposal:
     )
 
 
-def _append(cfg: Config, path: str, text: str, correction_id: int) -> None:
+def _append(
+    cfg: Config,
+    path: str,
+    text: str,
+    correction_id: int,
+    *,
+    default_header: str | None = None,
+    bullet: bool = False,
+) -> None:
     file = cfg.project_root / path
     file.parent.mkdir(parents=True, exist_ok=True)
     if file.exists():
@@ -199,7 +209,7 @@ def _append(cfg: Config, path: str, text: str, correction_id: int) -> None:
     elif path == TRIAGE_RULES:
         body = "```rules\n```\n"
     else:
-        body = "# 成长循环补充的记忆\n"
+        body = default_header or "# 成长循环补充的记忆\n"
     if path == TRIAGE_RULES:
         # 追加进 ```rules 代码块：在最后一个 ``` 之前插入；来源写成 # 注释行（解析器会跳过）
         idx = body.rfind("```")
@@ -210,7 +220,10 @@ def _append(cfg: Config, path: str, text: str, correction_id: int) -> None:
         if not body.endswith("\n"):
             body += "\n"
     else:
-        body = body.rstrip() + f"\n\n{text.rstrip()}\n<!-- 来源：纠正 #{correction_id} -->\n"
+        line = text.rstrip()
+        if bullet and not line.startswith("- "):
+            line = "- " + line
+        body = body.rstrip() + f"\n\n{line}\n<!-- 来源：纠正 #{correction_id} -->\n"
     file.write_text(body, encoding="utf-8")
 
 
@@ -243,18 +256,24 @@ def _write_case(cfg: Config, proposal: Proposal, correction_id: int) -> Path:
     return path
 
 
+def _append_fitness_rule(cfg: Config, text: str, correction_id: int) -> None:
+    if not text.strip():
+        raise GrowthError("模型没有给出健身规则文本")
+    _append(
+        cfg,
+        FITNESS_RULES,
+        text,
+        correction_id,
+        default_header="# 健身建议规则\n",
+        bullet=True,
+    )
+
+
 def _apply_fitness(cfg: Config, proposal: Proposal, correction_id: int) -> dict:
     if proposal.target == FITNESS_RULES:
         if proposal.kind != "rule":
             raise GrowthError("健身规则只接受 rule")
-        file = cfg.project_root / FITNESS_RULES
-        file.parent.mkdir(parents=True, exist_ok=True)
-        body = file.read_text(encoding="utf-8") if file.exists() else "# 健身建议规则\n"
-        line = proposal.text.strip()
-        if not line.startswith("- "):
-            line = "- " + line
-        body = body.rstrip() + f"\n\n{line}\n<!-- 来源：纠正 #{correction_id} -->\n"
-        file.write_text(body, encoding="utf-8")
+        _append_fitness_rule(cfg, proposal.text, correction_id)
         return {"target": proposal.target}
     if proposal.target == TRAINING_PROFILE:
         if proposal.kind != "profile":
@@ -283,6 +302,9 @@ def _apply_fitness(cfg: Config, proposal: Proposal, correction_id: int) -> dict:
             fitness.record_profile(cfg, payload)
         except ValueError as exc:
             raise GrowthError(f"训练画像没改成：{exc}") from exc
+        if proposal.rule_text:
+            _append_fitness_rule(cfg, proposal.rule_text, correction_id)
+            return {"target": proposal.target, "targets": [FITNESS_RULES, TRAINING_PROFILE]}
         return {"target": proposal.target}
     raise GrowthError(f"不是健身目标：{proposal.target}")
 
@@ -337,17 +359,23 @@ def run(cfg: Config, llm: LLM, limit: int = 10, dry_run: bool = False) -> Growth
             result.errors.append(f"纠正 #{correction['id']}：{exc}")
             continue
         if dry_run:
+            targets = [proposal.target]
+            if proposal.rule_text:
+                targets.insert(0, FITNESS_RULES)
             result.applied += 1
-            result.applied_items.append(f"#{correction['id']}（预演）{proposal.target}: {proposal.text}")
+            result.applied_items.append(
+                f"#{correction['id']}（预演）{' + '.join(targets)}: {proposal.text}"
+            )
             continue
         try:
             applied = apply_proposal(cfg, proposal, correction["id"])
         except GrowthError as exc:
             result.errors.append(f"纠正 #{correction['id']}：{exc}")
             continue
-        mark_applied(cfg, correction["id"], proposal.target, proposal.text)
+        target_label = " + ".join(applied.get("targets", [applied["target"]]))
+        mark_applied(cfg, correction["id"], target_label, proposal.text)
         result.applied += 1
-        item = f"#{correction['id']} → {applied['target']}: {proposal.text}"
+        item = f"#{correction['id']} → {target_label}: {proposal.text}"
         if applied.get("case"):
             item += f"（样例 {applied['case']}）"
         result.applied_items.append(item)

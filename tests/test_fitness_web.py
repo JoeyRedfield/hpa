@@ -105,6 +105,7 @@ class DemoSeedWebTest(FitnessWebCase):
         state = self._state()["fitness"]
         self.assertFalse(state["has_demo"])
         self.assertEqual(state["recent_workouts"], [])
+        self.assertFalse(fitness.profile_path(self.cfg).exists())
 
 
 class RecordWorkoutTest(FitnessWebCase):
@@ -901,6 +902,60 @@ class CorrectionTest(AdviceCase):
         self.assertIsNone(row["message_id"])
         self.assertEqual(row["status"], "pending")
 
+    def test_demo_seed_to_growth_changes_advice(self) -> None:
+        seeded = fitness.seed_demo(self.cfg)
+        self.assertEqual(seeded["workouts"], 4)
+        self.assertTrue(self._state()["fitness"]["has_demo"])
+        self.assertEqual(self._state()["fitness"]["profile"]["days_per_week"], 3)
+
+        code, advice = self._advice()
+        self.assertEqual(code, 200, advice)
+        self.assertLessEqual(len(advice["items"]), 3)
+        self.assertTrue(any("2.0t" in item["evidence"] for item in advice["items"]))
+        for item in advice["items"]:
+            self.assertTrue(item["workout_ids"])
+            self.assertRegex(item["evidence"], r"\d")
+            self.assertTrue(item["action"])
+        frequency = next(item for item in advice["items"] if item["rule"] == "frequency")
+        self.assertIn("3 次/周", frequency["evidence"])
+
+        code, correction = self._post(
+            "/api/fitness/correct", {"note": "别每次都让我加重量，我一周只能练两次"}
+        )
+        self.assertEqual(code, 200, correction)
+        reply = json.dumps(
+            {
+                "target": growth.TRAINING_PROFILE,
+                "kind": "profile",
+                "key": "weekly_days",
+                "value": "2",
+                "why": "用户一周只能练两次",
+                "rule": "一周只能练两次时，不要默认建议加重量。",
+            },
+            ensure_ascii=False,
+        )
+        result = growth.run(self.cfg, FakeLLM(reply))
+        self.assertEqual(result.errors, [])
+        self.assertEqual(result.applied, 1)
+        rules_text = (self.cfg.project_root / "rules/fitness-advice.md").read_text(encoding="utf-8")
+        self.assertIn("不要默认建议加重量", rules_text)
+        self.assertIn(f"来源：纠正 #{correction['id']}", rules_text)
+        self.assertEqual(fitness.read_profile(self.cfg)["days_per_week"], 2)
+
+        code, after = self._advice()
+        self.assertEqual(code, 200, after)
+        frequency = next(item for item in after["items"] if item["rule"] == "frequency")
+        self.assertIn("2 次/周", frequency["evidence"])
+        for item in after["items"]:
+            self.assertNotIn("加重量", item["action"])
+
+        code, cleared = self._post("/api/fitness/demo/clear", {"confirm": True})
+        self.assertEqual(code, 200, cleared)
+        state = self._state()["fitness"]
+        self.assertFalse(state["has_demo"])
+        self.assertEqual(state["recent_workouts"], [])
+        self.assertFalse(fitness.profile_path(self.cfg).exists())
+
     def test_growth_profile_correction_changes_advice_target(self) -> None:
         self._profile(3)
         for days_ago in (21, 14, 7, 0):
@@ -922,12 +977,16 @@ class CorrectionTest(AdviceCase):
                 "key": "weekly_days",
                 "value": "2",
                 "why": "用户一周只能练两次",
+                "rule": "一周只能练两次时，不要默认建议加重量。",
             },
             ensure_ascii=False,
         )
         result = growth.run(self.cfg, FakeLLM(reply))
         self.assertEqual(result.errors, [])
         self.assertEqual(result.applied, 1)
+        rules_text = (self.cfg.project_root / "rules/fitness-advice.md").read_text(encoding="utf-8")
+        self.assertIn("不要默认建议加重量", rules_text)
+        self.assertIn(f"来源：纠正 #{correction['id']}", rules_text)
 
         fitness = self._state()["fitness"]
         self.assertEqual(fitness["profile"]["days_per_week"], 2)

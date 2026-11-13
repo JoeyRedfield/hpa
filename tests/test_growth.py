@@ -247,6 +247,21 @@ class FitnessGrowthTest(unittest.TestCase):
         self.assertIn("每周可练：2", text)
         self.assertIn("自由备注。", text)
 
+    def test_profile_with_rule_updates_both_files(self) -> None:
+        proposal = growth.Proposal(
+            target=growth.TRAINING_PROFILE,
+            kind="profile",
+            text="weekly_days=2",
+            key="weekly_days",
+            value="2",
+            rule_text="一周只能练两次时，不要默认建议加重量。",
+        )
+        growth.apply_proposal(self.cfg, proposal, correction_id=1)
+        self.assertIn("每周可练：2", (self.root / growth.TRAINING_PROFILE).read_text(encoding="utf-8"))
+        rules_text = (self.root / growth.FITNESS_RULES).read_text(encoding="utf-8")
+        self.assertIn("不要默认建议加重量", rules_text)
+        self.assertIn("<!-- 来源：纠正 #1 -->", rules_text)
+
     def test_invalid_fitness_kind_rejected_and_file_unchanged(self) -> None:
         before = (self.root / growth.FITNESS_RULES).read_text(encoding="utf-8")
         llm = FakeLLM(

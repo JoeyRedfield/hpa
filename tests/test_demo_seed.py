@@ -79,6 +79,7 @@ class DemoSeedTest(unittest.TestCase):
         self.assertEqual(self._count("workouts", "is_demo = 1"), 0)
         self.assertEqual(self._count("weight_logs", "is_demo = 1"), 0)
         self.assertEqual(self._count("weight_logs", "is_demo = 0"), 1)
+        self.assertFalse(fitness.profile_path(self.cfg).exists())
 
     def test_seed_refuses_when_real_workout_exists(self) -> None:
         fitness.record_workout(
@@ -103,6 +104,8 @@ class DemoSeedTest(unittest.TestCase):
         self.assertFalse(res["profile_written"])
         self.assertEqual(fitness.profile_path(self.cfg).read_text(encoding="utf-8"), before)
         self.assertEqual(fitness.read_profile(self.cfg)["goal"], "增肌")
+        fitness.clear_demo(self.cfg)
+        self.assertEqual(fitness.profile_path(self.cfg).read_text(encoding="utf-8"), before)
 
     def _cli(self, argv: list[str]) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()

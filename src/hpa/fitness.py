@@ -53,6 +53,7 @@ DEMO_EXERCISES: tuple[tuple[str, float | None, int, int], ...] = (
     ("hanging_leg_raise", None, 12, 3),
 )
 DEMO_WEEKS = 4
+_DEMO_PROFILE_MARKER = "<!-- 演示画像：hpa demo seed 生成，--clear 会删除 -->"
 
 
 def catalog() -> list[dict]:
@@ -368,7 +369,20 @@ def clear_demo(cfg: Config) -> dict:
         conn.commit()
     finally:
         conn.close()
-    return {"status": "cleared", "workouts": workouts, "weights": weights}
+    profile_removed = False
+    path = profile_path(cfg)
+    try:
+        if path.exists() and _DEMO_PROFILE_MARKER in path.read_text(encoding="utf-8"):
+            path.unlink()
+            profile_removed = True
+    except OSError:
+        pass
+    return {
+        "status": "cleared",
+        "workouts": workouts,
+        "weights": weights,
+        "profile_removed": profile_removed,
+    }
 
 
 def seed_demo(cfg: Config) -> dict:
@@ -416,6 +430,8 @@ def seed_demo(cfg: Config) -> dict:
             raise ValueError(
                 f"演示训练已写入，但训练画像写入失败：{exc}；可修好目录后重跑 seed。"
             ) from exc
+        with profile_path(cfg).open("a", encoding="utf-8") as handle:
+            handle.write(f"\n{_DEMO_PROFILE_MARKER}\n")
         profile_written = True
     return {
         "status": "seeded",

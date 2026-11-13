@@ -108,7 +108,7 @@ Status: ready-for-agent
 
 - `growth.run` 按纠正的 `scope` 分流：`mail` 完全走现有逻辑（回归不能变）；`fitness` 用另一份固化提示，产出两类提案：
   - `rule` → 追加到 `rules/fitness-advice.md`（带「来源：纠正 #N」注释）；
-  - `profile` → `{key, value}` 结构化更新训练画像的四个键之一（目标 / 每周可练 / 器械 / 伤病），**改写文件头对应行，不新增重复行**。
+  - `profile` → `{key, value}` 结构化更新训练画像的四个键之一（目标 / 每周可练 / 器械 / 伤病），**改写文件头对应行，不新增重复行**；若同一句话还含可执行偏好，可额外带一条 `rule`，一并追加（Q15 的“别默认加重量 + 一周两次”即此情况）。
 - `fitness` 的合法目标是 `rules/fitness-advice.md` 与 `memory/training-profile.md`；后者 `kind` 必须是 `profile`，否则拒绝。
 - 健身纠正的上下文 = 纠正原文 + 训练画像 + 最近 4 周摘要 + 上次建议；**绝不拼训练备注**（P1）。
 - 固化提示明确：只改偏好 / 话术 / 目标；不得改代码、不得改数值阈值、不得删既有规则。
@@ -134,7 +134,7 @@ Status: ready-for-agent
 **接缝**（已与用户确认）：
 
 1. **HTTP JSON（主接缝）**：用现有 `make_server` 起真实 server，走 `/api/state` 与 `/api/fitness/*`。注入 FakeLLM 的方式与现有 sender 注入对齐（`llm_factory`）。
-   - 一条端到端验收测试：设画像 → 记 4 周训练 → 请求建议（≤3 条、每条 evidence 带数字、引用 workout id）→ 记纠正 → `growth.run` → 再请求建议（内容随规则改变）。
+   - 一条端到端验收测试：设画像 → 记 4 周训练 → 请求建议（≤3 条、每条 evidence 带数字、引用 workout id）→ 记纠正 → `growth.run` → 再请求建议（画像驱动 2 天；规则进入模型措辞上下文）。
    - 无 LLM key / 模型抛错时仍返回 200 且 `llm_used=false`。
    - 校验用例：未知动作、越界次数、未来日期、缺 token、删除不带 `confirm`。
    - 隐私用例：备注写入后，捕获发给模型的 system/user 文本，断言不含备注原文。

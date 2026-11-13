@@ -302,6 +302,8 @@ def _cmd_demo_seed(args: argparse.Namespace) -> int:
         if args.clear:
             res = fitness.clear_demo(cfg)
             print(f"🧹 已清除演示数据：训练 {res['workouts']} 次 / 体重 {res['weights']} 条。")
+            if res.get("profile_removed"):
+                print("   演示画像已删除。")
         else:
             res = fitness.seed_demo(cfg)
             print(

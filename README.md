@@ -15,6 +15,8 @@
 - 反复轮询邮箱不会重复处理同一封、更不会重复发送
 - 我纠正过的偏好会落成规则文件，**新会话**里对同类邮件生效（例：不要把我发的会议邀请当成需要回复的邮件）
 - 同一套上下文能跨工具做事：邮件里提到的项目 → 检索笔记库 → 引用原文 → 写进草稿
+- 健身：手机上约 30 秒记一次训练；点「给我建议」得到最多 3 条、每条都带我自己数据和一个具体动作
+- 我纠正一句「一周只能练两次」，`hpa growth run` 固化后，同一份训练数据下次建议会真的按两天来
 - 所有改动都在 git 里可追溯，包括"我为什么这么设计"
 
 ## 最重要的三个设计
@@ -33,12 +35,12 @@ Lab 1 原文举例要求接南大 `smail` 邮箱和 `ehall` 办事大厅，我�
 
 - ✅ intent（本文件）
 - ✅ spec：[.scratch/growing-assistant/spec.md](.scratch/growing-assistant/spec.md)
-- 📝 健身（记录、建议与纠正）spec：[.scratch/fitness/spec.md](.scratch/fitness/spec.md)（ready-for-agent，待实现）
 - ✅ M1 个人数据库：`hpa index` 增量索引 680 篇（P0 651 / P1 28 / P2 1，约 2.6s）；`hpa ask` 中文检索并给 `文件:行号` 定位；P1/P2 在 SQL 层被 `purpose=prompt` 挡在模型之外。设计见 [ADR 0001](docs/adr/0001-sqlite-fts5-trigram.md)。
 - ✅ M2 邮件接入：`hpa mail sync` 用 `UIDVALIDITY+UID` 游标增量拉取，Message-ID 去重（三次同步不增），UIDVALIDITY 变化时重扫不重复；`rules/mail-triage.md` 是人工可改的规则 DSL（12 条），`hpa mail triage` 规则优先、命中即定型。
 - ✅ M3a 流水线（未发送）：`hpa process` = 模型分诊 → 抽取待办 → 检索 P0 笔记 → 起草带 `[引用]` 的回复，草稿状态 `proposed` 进队列；全程幂等，`--dry-run` 只走一遍不写库。LLM 走 DeepSeek（OpenAI 兼容），provider 已抽象。
 - ✅ M3b 确认闸门：`hpa web` 起手机端一页（PWA，绑定 `127.0.0.1:8787`，手机经 Tailscale 访问）；草稿可在手机上改（改一次 = 新版本，须重新确认）、驳回、记录纠正；**只有点「确认发送」才走 SMTP**。发送状态机 `proposed → sending → sent`，失败退回 `proposed` 并显示原因；崩溃在 `sending` 不自动重发，由人核对后收尾。
 - ✅ M4 成长闭环：手机上记一条纠正 → `hpa growth run` 让模型把它改写成 `rules/mail-triage.md` 的一条规则、`rules/reply-style.md` 的写作要求、或 `memory/preferences.md` 的一条记忆；新规则先过 DSL 语法校验（写坏就回滚），可判定的同时生成 `tests/cases/*.md` 回归样例，`hpa growth check` 随时验证。改动只写本仓库、带「来源：纠正 #N」注释，用 `git diff` 审完再提交——**新会话重新加载规则即生效**。
+- ✅ M6 健身闭环（记录、建议与纠正）：`hpa web` 的「健身」tab 记录训练/体重/画像，点「给我建议」由脚本算事实与候选、模型只排序措辞；纠正写进 `corrections(scope=fitness)`，`hpa growth run` 固化成规则和/或画像改动；`hpa demo seed` 可灌/清 4 周演示数据。spec：[.scratch/fitness/spec.md](.scratch/fitness/spec.md)。
 - ✅ M5 组合与归档：`hpa daemon` 每 5 分钟一轮「同步 → 规则分诊 → 模型流水线」，单轮失败只记日志不杀循环，模型/邮箱凭据缺失时自动降级；配 `HPA_PUSH_URL` 可在有新事时 POST 一条消息到手机（不配也能在手机页看到，页面 20s 自刷新）。`hpa export` 把已发送的邮件连同原文、待办、最终稿、引用、纠正记录导出成带 frontmatter 的 Markdown 到 `outbox/`，由我手动搬进笔记库（保持 vault 只读）。至此走通一条完整流程：**邮件进来 → 待办+草稿 → 手机确认发送 → 导出归档**。
 
 ## 对应 Lab1 的五项能力
@@ -54,14 +56,14 @@ Lab 1 原文举例要求接南大 `smail` 邮箱和 `ehall` 办事大厅，我�
 
 实机跑通记录（真实 QQ 邮箱 + DeepSeek，2026-11-11）见 [docs/demo.md](docs/demo.md)。
 
-## 当前状态（2026-11-12）
+## 当前状态（2026-11-13）
 
-邮件链路已按我的要求暂停并关闭：`bin/hpa daemon` 与 `bin/hpa web` 都已停止，没有 launchd 服务会拉起它们；
+邮件链路的自动处理仍暂停（`bin/hpa daemon` 不跑、发送不自动恢复）；`hpa web` 可按需手动启动，目前用于「健身」tab。
 `state/hpa.sqlite3` 里留了 `paused=1`，即使以后误启动 daemon 也不会自动拉信。**数据都还在**
 （已同步邮件、待办、草稿、已发送记录、`outbox/` 归档、`.cache/kb.sqlite3` 索引），凭据仍在
 `~/.config/hpa/secrets.env`（不想留着可以直接删这个文件）。
 
-本地能力不受影响：`hpa index` / `hpa ask` / `hpa stats` / `hpa todos` / `hpa export` 都还能用。
+本地能力不受影响：`hpa index` / `hpa ask` / `hpa stats` / `hpa todos` / `hpa export` / `hpa demo seed` 都还能用。
 需要重新打开邮件链路时：
 
 ```bash
@@ -76,10 +78,11 @@ caffeinate -i ./scripts/start-foreground.sh
 ./bin/hpa mail sync                  # 拉新邮件（首次只取最近 50 封：--bootstrap-limit 调整）
 ./bin/hpa mail triage                # 规则优先分诊
 ./bin/hpa process                    # 模型分诊 → 抽取待办 → 检索 → 起草
-./bin/hpa web                        # 手机端：待办 / 草稿确认 / 纠正
+./bin/hpa web                        # 手机端：邮件 / 健身两个 tab（记录、建议、纠正）
 ./bin/hpa growth list                # 看有哪些纠正还没固化
 ./bin/hpa growth run                 # 纠正 → 规则/记忆 + 回归样例（写进 git）
 ./bin/hpa growth check               # 跑回归样例，确认老规则没被写坏
+./bin/hpa demo seed                  # 灌 4 周健身演示数据（--clear 只清演示数据）
 ./bin/hpa export                     # 已发送邮件 → outbox/*.md（手动搬进笔记库）
 ./bin/hpa daemon                     # 常驻：每 5 分钟同步+分诊+起草（--once 单轮调试）
 ```
@@ -94,6 +97,18 @@ HPA_WEB_TOKEN=自己定一个长随机串
 ```
 
 手机访问：`http://<Mac 的 Tailscale IP>:8787/?token=<HPA_WEB_TOKEN>`（首次带 token，之后写 Cookie）。
+
+### 健身演示（约 2 分钟）
+
+```bash
+./bin/hpa demo seed     # 干净数据目录：4 周训练 + 体重 + 演示画像（已有画像不覆盖）
+./bin/hpa web           # 手机打开「健身」tab，点「给我建议」
+# 写一句纠正，例如「别每次都让我加重量，我一周只能练两次」，然后：
+./bin/hpa growth run    # 固化成规则/画像改动，git diff 可审
+./bin/hpa demo seed --clear   # 只清演示数据，真实记录不动
+```
+
+`demo seed` 在已有真实训练时会拒绝；演示训练与体重带 `is_demo`，演示画像会写标记，页面顶部有「演示数据」横幅和清除入口；`--clear` 连演示画像一起删，不动你已有的画像。
 
 ### 让它常开 + 手机访问
 
