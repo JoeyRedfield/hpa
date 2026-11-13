@@ -341,6 +341,10 @@ class Handler(BaseHTTPRequestHandler):
                 return {"parser": "none", "message": str(exc)}
             except Exception:  # noqa: BLE001 - 解析失败只降级，不影响其余接口
                 return {"parser": "none", "message": "没解析出来。请手动填下面的表单。"}
+        if path == "/api/fitness/demo/clear":
+            if payload.get("confirm") is not True:
+                raise ValueError("清除演示数据需要确认（confirm: true）")
+            return fitness.clear_demo(cfg)
         if path == "/api/fitness/advice":
             try:
                 client = self.server.llm_factory(cfg)

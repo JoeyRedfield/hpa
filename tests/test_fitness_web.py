@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from hpa import growth, llm, store, web
+from hpa import fitness, growth, llm, store, web
 from hpa.config import Config
 
 TOKEN = "test-token"
@@ -86,6 +86,25 @@ class FitnessWebCase(unittest.TestCase):
             "/api/fitness/record",
             {"kind": "workout", "performed_on": _today(), "note": note, "exercises": exercises},
         )
+
+
+class DemoSeedWebTest(FitnessWebCase):
+    def test_state_flags_demo_and_clear_endpoint_removes_it(self) -> None:
+        res = fitness.seed_demo(self.cfg)
+        self.assertEqual(res["workouts"], 4)
+        state = self._state()["fitness"]
+        self.assertTrue(state["has_demo"])
+        self.assertEqual(len(state["recent_workouts"]), 4)
+
+        code, data = self._post("/api/fitness/demo/clear", {})
+        self.assertEqual(code, 400, data)
+
+        code, data = self._post("/api/fitness/demo/clear", {"confirm": True})
+        self.assertEqual(code, 200, data)
+        self.assertEqual(data["workouts"], 4)
+        state = self._state()["fitness"]
+        self.assertFalse(state["has_demo"])
+        self.assertEqual(state["recent_workouts"], [])
 
 
 class RecordWorkoutTest(FitnessWebCase):

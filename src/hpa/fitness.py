@@ -39,6 +39,21 @@ EXERCISES: dict[str, tuple[str, str, bool]] = {
     "deadlift": ("硬拉", "legs", False),
 }
 
+DEMO_PROFILE: dict[str, object] = {
+    "goal": "力量",
+    "days_per_week": 3,
+    "equipment": "健身房",
+    "injuries": "无伤",
+}
+# 每周一次，四个动作按验收数据；自重动作 weight 为 None
+DEMO_EXERCISES: tuple[tuple[str, float | None, int, int], ...] = (
+    ("squat", 80.0, 5, 5),
+    ("bench_press", 60.0, 5, 5),
+    ("pull_up", None, 8, 3),
+    ("hanging_leg_raise", None, 12, 3),
+)
+DEMO_WEEKS = 4
+
 
 def catalog() -> list[dict]:
     return [
@@ -316,6 +331,98 @@ def record_weight(cfg: Config, payload: dict) -> dict:
     finally:
         conn.close()
     return {"status": "recorded", "logged_on": logged_on, "weight_kg": weight}
+
+
+def _has_demo(conn) -> bool:
+    row = conn.execute(
+        "SELECT EXISTS(SELECT 1 FROM workouts WHERE is_demo = 1) "
+        "OR EXISTS(SELECT 1 FROM weight_logs WHERE is_demo = 1)"
+    ).fetchone()
+    return bool(row[0])
+
+
+def _demo_counts(conn) -> tuple[int, int]:
+    workouts = conn.execute(
+        "SELECT COUNT(*) FROM workouts WHERE is_demo = 1"
+    ).fetchone()[0]
+    weights = conn.execute(
+        "SELECT COUNT(*) FROM weight_logs WHERE is_demo = 1"
+    ).fetchone()[0]
+    return int(workouts), int(weights)
+
+
+def _delete_demo(conn) -> None:
+    conn.execute(
+        "DELETE FROM workout_sets WHERE workout_id IN "
+        "(SELECT id FROM workouts WHERE is_demo = 1)"
+    )
+    conn.execute("DELETE FROM workouts WHERE is_demo = 1")
+    conn.execute("DELETE FROM weight_logs WHERE is_demo = 1")
+
+
+def clear_demo(cfg: Config) -> dict:
+    conn = store.connect(cfg)
+    try:
+        workouts, weights = _demo_counts(conn)
+        _delete_demo(conn)
+        conn.commit()
+    finally:
+        conn.close()
+    return {"status": "cleared", "workouts": workouts, "weights": weights}
+
+
+def seed_demo(cfg: Config) -> dict:
+    conn = store.connect(cfg)
+    try:
+        real = conn.execute(
+            "SELECT COUNT(*) FROM workouts WHERE is_demo = 0"
+        ).fetchone()[0]
+        if real:
+            raise ValueError(
+                "已有真实训练记录，演示种子会污染统计；请换独立数据目录再灌。"
+            )
+        _delete_demo(conn)
+        today = date.fromisoformat(local_today())
+        created = store.utcnow()
+        for week in range(DEMO_WEEKS - 1, -1, -1):
+            performed_on = (today - timedelta(days=week * 7)).isoformat()
+            cur = conn.execute(
+                "INSERT INTO workouts(performed_on, started_at, note, is_demo, created_at) "
+                "VALUES (?, '18:00', '', 1, ?)",
+                (performed_on, created),
+            )
+            workout_id = cur.lastrowid
+            for exercise, weight, reps, sets in DEMO_EXERCISES:
+                conn.executemany(
+                    "INSERT INTO workout_sets(workout_id, exercise, set_index, weight_kg, reps) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    [(workout_id, exercise, index, weight, reps) for index in range(1, sets + 1)],
+                )
+            # 真实体重若占用了同一天，保留真实值；演示体重可能少于 4 条。
+            conn.execute(
+                "INSERT INTO weight_logs(logged_on, weight_kg, is_demo) VALUES (?, 75.0, 1) "
+                "ON CONFLICT(logged_on) DO NOTHING",
+                (performed_on,),
+            )
+        conn.commit()
+        workouts, weights = _demo_counts(conn)
+    finally:
+        conn.close()
+    profile_written = False
+    if not profile_path(cfg).exists():
+        try:
+            record_profile(cfg, DEMO_PROFILE)
+        except OSError as exc:
+            raise ValueError(
+                f"演示训练已写入，但训练画像写入失败：{exc}；可修好目录后重跑 seed。"
+            ) from exc
+        profile_written = True
+    return {
+        "status": "seeded",
+        "workouts": workouts,
+        "weights": weights,
+        "profile_written": profile_written,
+    }
 
 
 def delete_workout(cfg: Config, workout_id: int, confirm: bool) -> dict:
@@ -1065,6 +1172,7 @@ def state(cfg: Config) -> dict:
             "SELECT COUNT(*) FROM corrections "
             "WHERE COALESCE(scope, 'mail') = 'fitness' AND status = 'pending'"
         ).fetchone()[0]
+        demo = _has_demo(conn)
     finally:
         conn.close()
     return {
@@ -1074,4 +1182,5 @@ def state(cfg: Config) -> dict:
         "profile": read_profile(cfg),
         "last_advice": last_advice,
         "pending_corrections": int(pending),
+        "has_demo": demo,
     }

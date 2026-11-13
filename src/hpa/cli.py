@@ -8,7 +8,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import daemon, export, growth, kb, mail, pipeline, rules, store, triage, web
+from . import daemon, export, fitness, growth, kb, mail, pipeline, rules, store, triage, web
 from .config import Config
 from .llm import LLMError, from_config as llm_from_config
 
@@ -296,6 +296,27 @@ def _cmd_growth_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_demo_seed(args: argparse.Namespace) -> int:
+    cfg = Config.load(Path(args.config) if args.config else None)
+    try:
+        if args.clear:
+            res = fitness.clear_demo(cfg)
+            print(f"🧹 已清除演示数据：训练 {res['workouts']} 次 / 体重 {res['weights']} 条。")
+        else:
+            res = fitness.seed_demo(cfg)
+            print(
+                f"✅ 已灌入演示数据：训练 {res['workouts']} 次 / 体重 {res['weights']} 条。"
+            )
+            if res["profile_written"]:
+                print("   训练画像已写入演示画像。")
+            else:
+                print("   已有训练画像，未覆盖。")
+    except ValueError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hpa", description="会成长的个人助手")
     parser.add_argument("--config", help="config.toml 路径（默认仓库根）")
@@ -392,6 +413,12 @@ def build_parser() -> argparse.ArgumentParser:
         p_t = todos_sub.add_parser(name, help=help_text)
         p_t.add_argument("id")
         p_t.set_defaults(func=_cmd_todos)
+
+    p_demo = sub.add_parser("demo", help="演示数据（4 周训练 + 体重 + 画像）")
+    demo_sub = p_demo.add_subparsers(dest="demo_cmd", required=True)
+    p_demo_seed = demo_sub.add_parser("seed", help="灌入演示数据；--clear 只清演示数据")
+    p_demo_seed.add_argument("--clear", action="store_true", help="只清除演示数据，不灌入")
+    p_demo_seed.set_defaults(func=_cmd_demo_seed)
 
     p_daemon = sub.add_parser("daemon", help="常驻循环：同步 → 规则分诊 → 模型流水线")
     p_daemon.add_argument("--interval", type=int, default=300, help="轮询间隔秒数，默认 300")

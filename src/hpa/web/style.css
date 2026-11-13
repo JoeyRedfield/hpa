@@ -9,6 +9,7 @@
   --accent: #4da3ff;
   --danger: #ff6b6b;
   --ok: #47d18c;
+  --warn: #f2c46d;
 }
 
 * { box-sizing: border-box; }
@@ -283,3 +284,22 @@ footer { display: flex; align-items: center; gap: 0.8rem; padding: 0.5rem 1rem 1
 .fx-correction label { display: block; font-size: 0.8rem; margin-bottom: 0.35rem; }
 .fx-correction textarea { width: 100%; resize: vertical; min-height: 2.8rem; }
 .fx-correction-bar { display: flex; align-items: center; gap: 0.7rem; margin-top: 0.45rem; }
+
+.fx-demo-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.9rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid rgba(242, 196, 109, 0.45);
+  border-radius: 0.6rem;
+  background: rgba(242, 196, 109, 0.12);
+  color: var(--warn);
+  font-size: 0.85rem;
+}
+
+.fx-demo-banner[hidden] {
+  display: none;
+}

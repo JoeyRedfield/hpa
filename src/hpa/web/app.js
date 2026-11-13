@@ -626,6 +626,8 @@ async function submitCorrection() {
 }
 
 function renderFitness(fitness) {
+  const demo = $("#fx-demo-banner");
+  demo.hidden = !fitness.has_demo;
   const pending = $("#fx-correction-pending");
   const count = Number(fitness.pending_corrections || 0);
   pending.textContent = count ? `待固化 ${count} 条` : "";
@@ -639,6 +641,17 @@ function renderFitness(fitness) {
   renderProfile(fitness.profile || {});
   renderRecent(fitness.recent_workouts || []);
   renderAdvice(fitness.last_advice || null);
+}
+
+async function clearDemo() {
+  if (!window.confirm("清除所有演示数据？真实记录不会动。")) return;
+  try {
+    const res = await api("/api/fitness/demo/clear", { confirm: true });
+    toast(`已清除演示训练 ${res.workouts} 次、体重 ${res.weights} 条`);
+  } catch (e) {
+    toast(String(e.message || e), 5000);
+  }
+  await loadState();
 }
 
 async function loadState() {
@@ -701,6 +714,7 @@ $("#fx-exercise").addEventListener("change", syncWeightInput);
 $("#fx-weight-save").addEventListener("click", saveWeight);
 $("#fx-advice").addEventListener("click", generateAdvice);
 $("#fx-correct").addEventListener("click", submitCorrection);
+$("#fx-demo-clear").addEventListener("click", clearDemo);
 $("#fx-weight-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") saveWeight();
 });
