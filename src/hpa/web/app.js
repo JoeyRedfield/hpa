@@ -555,6 +555,10 @@ function renderAdvice(advice) {
     box.appendChild(empty);
   }
 
+  const list = document.createElement("div");
+  list.className = "fx-advice-list";
+  box.appendChild(list);
+
   const labels = { frequency: "频率", volume: "容量", stagnation: "停滞" };
   for (const item of advice.items) {
     const card = document.createElement("article");
@@ -572,7 +576,7 @@ function renderAdvice(advice) {
       line.textContent = field === "action" ? `→ ${item.action || ""}` : item[field] || "";
       card.appendChild(line);
     }
-    box.appendChild(card);
+    list.appendChild(card);
   }
 
   if (Array.isArray(advice.insufficient) && advice.insufficient.length) {

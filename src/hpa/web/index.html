@@ -51,12 +51,14 @@
   </div>
 
   <div id="tab-fitness" class="tab-panel" hidden>
-    <section>
-      <div id="fx-demo-banner" class="fx-demo-banner" hidden>
-        <span>当前显示的是演示数据，不是你的真实记录。</span>
-        <button id="fx-demo-clear" class="secondary">清除演示数据</button>
-      </div>
-      <h2>记录一次训练</h2>
+    <div id="fx-demo-banner" class="fx-demo-banner" hidden>
+      <span>当前显示的是演示数据，不是你的真实记录。</span>
+      <button id="fx-demo-clear" class="secondary">清除演示数据</button>
+    </div>
+    <div class="fx-layout">
+      <div class="fx-col fx-main-col">
+        <section>
+          <h2>记录一次训练</h2>
       <p class="hint">默认按「重量×次数×组数」填，展开后还能逐组改；自重动作只填次数。</p>
       <p class="hint">一句话快捷输入先在本机解析；解析不了才把这句发给模型。</p>
       <div class="fitness-form">
@@ -99,10 +101,12 @@
         <button id="fx-weight-save" class="secondary">记录体重</button>
         <span id="fx-weight-today" class="muted"></span>
       </div>
-    </section>
+        </section>
+      </div>
 
-    <section>
-      <h2>训练画像</h2>
+      <div class="fx-col fx-side-col">
+        <section>
+          <h2>训练画像</h2>
       <p class="hint">建议会按它对齐；这里只改这四项，文件里的其他文字会保留。</p>
       <div class="fx-profile">
         <label>目标
@@ -139,10 +143,11 @@
       <h3>训练</h3>
       <div id="fitness-recent"></div>
       <div id="fitness-recent-empty" class="empty" hidden>还没有训练记录。</div>
-    </section>
+        </section>
+      </div>
 
-    <section>
-      <h2>建议</h2>
+      <section class="fx-advice-section">
+        <h2>建议</h2>
       <p class="hint">只在你点按钮时生成，不推送、不排期；脚本先算数据，接入模型后只负责措辞。</p>
       <div class="fx-advice-bar">
         <button id="fx-advice" class="primary">给我建议</button>
@@ -158,7 +163,8 @@
         </div>
         <p class="hint">只在本机记录；下次 <code>hpa growth run</code> 固化，不会改数值阈值。</p>
       </div>
-    </section>
+      </section>
+    </div>
   </div>
 </main>
 
