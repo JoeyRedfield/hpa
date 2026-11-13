@@ -145,6 +145,15 @@
         <span id="fx-advice-status" class="muted" role="status" aria-live="polite"></span>
       </div>
       <div id="fx-advice-result" aria-live="polite"></div>
+      <div class="fx-correction">
+        <label for="fx-correction">纠正一句话（比如「别每次都让我加重量」）</label>
+        <textarea id="fx-correction" rows="2" maxlength="500" placeholder="写下你的偏好、话术或目标调整"></textarea>
+        <div class="fx-correction-bar">
+          <button id="fx-correct" class="secondary">记录纠正</button>
+          <span id="fx-correction-pending" class="muted"></span>
+        </div>
+        <p class="hint">只在本机记录；下次 <code>hpa growth run</code> 固化，不会改数值阈值。</p>
+      </div>
     </section>
   </div>
 </main>

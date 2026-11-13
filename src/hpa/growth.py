@@ -18,15 +18,18 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import rules, store
+from . import fitness, rules, store
 from .config import Config
 from .llm import LLM, LLMError, load_prompt, parse_json
 
 TRIAGE_RULES = "rules/mail-triage.md"
 REPLY_STYLE = "rules/reply-style.md"
 MEMORY = "memory/preferences.md"
+FITNESS_RULES = "rules/fitness-advice.md"
+TRAINING_PROFILE = "memory/training-profile.md"
 CASES_DIR = "tests/cases"
-VALID_TARGETS = (TRIAGE_RULES, REPLY_STYLE, MEMORY)
+MAIL_TARGETS = (TRIAGE_RULES, REPLY_STYLE, MEMORY)
+FITNESS_TARGETS = (FITNESS_RULES, TRAINING_PROFILE)
 
 
 class GrowthError(RuntimeError):
@@ -36,7 +39,7 @@ class GrowthError(RuntimeError):
 @dataclass
 class Proposal:
     target: str
-    kind: str  # "rule" | "note"
+    kind: str  # "rule" | "note" | "profile"
     text: str
     why: str = ""
     sample_from: str = ""
@@ -44,6 +47,8 @@ class Proposal:
     sample_subject: str = ""
     sample_body: str = ""
     sample_expected: str = ""
+    key: str = ""
+    value: str = ""
 
 
 @dataclass
@@ -95,13 +100,77 @@ def _context(cfg: Config, correction: dict) -> str:
     return "\n\n".join(parts)
 
 
+_PROFILE_KEYS = {
+    "goal": "goal",
+    "目标": "goal",
+    "weekly_days": "days_per_week",
+    "days_per_week": "days_per_week",
+    "每周可练": "days_per_week",
+    "equipment": "equipment",
+    "器械": "equipment",
+    "injuries": "injuries",
+    "伤病": "injuries",
+}
+
+
+def _fitness_context(cfg: Config, correction: dict) -> str:
+    """健身纠正只带画像、4 周摘要和上次建议；备注不进 prompt。"""
+    data = fitness.growth_context(cfg)
+    return "\n\n".join(
+        [
+            f"## 纠正原文\n{correction['raw']}",
+            "## 训练画像\n" + json.dumps(data["profile"], ensure_ascii=False, indent=2),
+            "## 最近 4 周训练摘要\n" + json.dumps(data["summary"], ensure_ascii=False, indent=2),
+            "## 上次建议\n"
+            + (json.dumps(data["last_advice"], ensure_ascii=False, indent=2) if data["last_advice"] else "（还没有建议）"),
+        ]
+    )
+
+
+def _propose_fitness(cfg: Config, llm: LLM, correction: dict) -> Proposal:
+    system = load_prompt(cfg, "fitness-growth.md")
+    data = parse_json(llm.complete(system, _fitness_context(cfg, correction)))
+    target = str(data.get("target", "")).strip()
+    kind = str(data.get("kind", "")).strip()
+    why = str(data.get("why", "")).strip()
+    if target not in FITNESS_TARGETS:
+        raise GrowthError(f"模型给了不认识的健身目标：{target}")
+    if target == FITNESS_RULES:
+        if kind != "rule":
+            raise GrowthError(f"健身规则的 kind 必须是 rule，收到：{kind}")
+        text = str(data.get("text", "")).strip()
+        if not text:
+            raise GrowthError("模型没有给出健身规则文本")
+        return Proposal(target=target, kind="rule", text=text, why=why)
+    if target == TRAINING_PROFILE:
+        if kind != "profile":
+            raise GrowthError(f"训练画像的 kind 必须是 profile，收到：{kind}")
+        key = str(data.get("key", "")).strip()
+        value = str(data.get("value", "")).strip()
+        if key not in _PROFILE_KEYS:
+            raise GrowthError(f"模型给了不认识的画像字段：{key}")
+        if not value:
+            raise GrowthError("模型没有给出画像值")
+        return Proposal(
+            target=target,
+            kind="profile",
+            text=f"{key}={value}",
+            why=why,
+            key=key,
+            value=value,
+        )
+    raise GrowthError(f"模型给了不认识的健身目标：{target}")
+
+
 def propose(cfg: Config, llm: LLM, correction: dict) -> Proposal:
+    if (correction.get("scope") or "mail") == "fitness":
+        return _propose_fitness(cfg, llm, correction)
     system = load_prompt(cfg, "growth.md")
     data = parse_json(llm.complete(system, _context(cfg, correction)))
     target = str(data.get("target", TRIAGE_RULES)).strip()
     kind = str(data.get("kind", "rule")).strip()
     text = str(data.get("text", "")).strip()
-    if target not in VALID_TARGETS:
+    if target not in MAIL_TARGETS:
         raise GrowthError(f"模型给了不认识的目标：{target}")
     if kind not in ("rule", "note"):
         raise GrowthError(f"模型给了不认识的类型：{kind}")
@@ -174,8 +243,54 @@ def _write_case(cfg: Config, proposal: Proposal, correction_id: int) -> Path:
     return path
 
 
+def _apply_fitness(cfg: Config, proposal: Proposal, correction_id: int) -> dict:
+    if proposal.target == FITNESS_RULES:
+        if proposal.kind != "rule":
+            raise GrowthError("健身规则只接受 rule")
+        file = cfg.project_root / FITNESS_RULES
+        file.parent.mkdir(parents=True, exist_ok=True)
+        body = file.read_text(encoding="utf-8") if file.exists() else "# 健身建议规则\n"
+        line = proposal.text.strip()
+        if not line.startswith("- "):
+            line = "- " + line
+        body = body.rstrip() + f"\n\n{line}\n<!-- 来源：纠正 #{correction_id} -->\n"
+        file.write_text(body, encoding="utf-8")
+        return {"target": proposal.target}
+    if proposal.target == TRAINING_PROFILE:
+        if proposal.kind != "profile":
+            raise GrowthError("训练画像只接受 profile")
+        current = fitness.read_profile(cfg)
+        if not current.get("complete"):
+            raise GrowthError("训练画像还不完整，请先在健身 tab 补齐四项")
+        try:
+            field = _PROFILE_KEYS[proposal.key]
+        except KeyError as exc:
+            raise GrowthError(f"训练画像没有这个字段：{proposal.key}") from exc
+        payload = {
+            "goal": current["goal"],
+            "days_per_week": current["days_per_week"],
+            "equipment": current["equipment"],
+            "injuries": current["injuries"],
+        }
+        if field == "days_per_week":
+            try:
+                payload[field] = int(proposal.value)
+            except (TypeError, ValueError) as exc:
+                raise GrowthError(f"每周可练必须是 1–7 的整数：{proposal.value}") from exc
+        else:
+            payload[field] = proposal.value
+        try:
+            fitness.record_profile(cfg, payload)
+        except ValueError as exc:
+            raise GrowthError(f"训练画像没改成：{exc}") from exc
+        return {"target": proposal.target}
+    raise GrowthError(f"不是健身目标：{proposal.target}")
+
+
 def apply_proposal(cfg: Config, proposal: Proposal, correction_id: int) -> dict:
     """校验后写入；返回 {target, case?}。写坏规则时不改动文件。"""
+    if proposal.target in FITNESS_TARGETS:
+        return _apply_fitness(cfg, proposal, correction_id)
     if proposal.target == TRIAGE_RULES and proposal.sample_expected not in ("", "ignore", "needs_reply", "fyi"):
         raise GrowthError(f"期望动作不合法：{proposal.sample_expected}")
     file = cfg.project_root / proposal.target

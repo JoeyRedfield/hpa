@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from hpa import growth, rules, store
+from hpa import fitness, growth, rules, store
 from hpa.config import Config
 from hpa.llm import LLMError
 
@@ -178,6 +178,163 @@ class GrowthTest(unittest.TestCase):
         llm = FakeLLM(_proposal_json(target="src/hpa/kb.py"))
         with self.assertRaises(growth.GrowthError):
             growth.propose(self.cfg, llm, {"id": 1, "raw": "x", "message_id": None})
+
+
+
+
+class FitnessGrowthTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.root = root
+        (root / "rules").mkdir()
+        (root / "rules" / "mail-triage.md").write_text(BASE_RULES, encoding="utf-8")
+        (root / growth.FITNESS_RULES).parent.mkdir(parents=True, exist_ok=True)
+        (root / growth.FITNESS_RULES).write_text(
+            "# 健身建议规则\n\n<!-- 由成长循环追加。 -->\n", encoding="utf-8"
+        )
+        (root / "prompts").mkdir()
+        source = Path(__file__).resolve().parents[1] / "prompts" / "fitness-growth.md"
+        (root / "prompts" / "fitness-growth.md").write_text(
+            source.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        (root / "memory").mkdir()
+        (root / growth.TRAINING_PROFILE).parent.mkdir(parents=True, exist_ok=True)
+        (root / growth.TRAINING_PROFILE).write_text(
+            "目标：力量\n每周可练：3\n器械：健身房\n伤病：无\n\n自由备注。\n",
+            encoding="utf-8",
+        )
+        vault = root / "vault"
+        vault.mkdir()
+        self.cfg = Config(vault=vault, project_root=root)
+        conn = store.connect(self.cfg)
+        try:
+            conn.execute(
+                "INSERT INTO corrections(created_at, message_id, raw, scope) VALUES (?, NULL, ?, 'fitness')",
+                ("2026-11-13T00:00:00Z", "别每次都让我加重量，我一周只能练两次"),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _correction(self) -> dict:
+        return {"id": 1, "raw": "别每次都让我加重量，我一周只能练两次", "message_id": None, "scope": "fitness"}
+
+    def test_rule_proposal_appends_with_source(self) -> None:
+        proposal = growth.Proposal(
+            target=growth.FITNESS_RULES,
+            kind="rule",
+            text="用户每周通常只能练两次，不要默认建议加重量。",
+        )
+        applied = growth.apply_proposal(self.cfg, proposal, correction_id=1)
+        self.assertEqual(applied["target"], growth.FITNESS_RULES)
+        text = (self.root / growth.FITNESS_RULES).read_text(encoding="utf-8")
+        self.assertIn("- 用户每周通常只能练两次", text)
+        self.assertIn("<!-- 来源：纠正 #1 -->", text)
+
+    def test_profile_proposal_rewrites_one_line_without_duplicate(self) -> None:
+        proposal = growth.Proposal(
+            target=growth.TRAINING_PROFILE,
+            kind="profile",
+            text="weekly_days=2",
+            key="weekly_days",
+            value="2",
+        )
+        growth.apply_proposal(self.cfg, proposal, correction_id=1)
+        text = (self.root / growth.TRAINING_PROFILE).read_text(encoding="utf-8")
+        self.assertEqual(text.count("每周可练："), 1)
+        self.assertIn("每周可练：2", text)
+        self.assertIn("自由备注。", text)
+
+    def test_invalid_fitness_kind_rejected_and_file_unchanged(self) -> None:
+        before = (self.root / growth.FITNESS_RULES).read_text(encoding="utf-8")
+        llm = FakeLLM(
+            json.dumps(
+                {"target": growth.FITNESS_RULES, "kind": "profile", "key": "weekly_days", "value": "2"},
+                ensure_ascii=False,
+            )
+        )
+        with self.assertRaises(growth.GrowthError):
+            growth.propose(self.cfg, llm, self._correction())
+        self.assertEqual(before, (self.root / growth.FITNESS_RULES).read_text(encoding="utf-8"))
+
+    def test_unknown_fitness_target_rejected(self) -> None:
+        before = (self.root / growth.FITNESS_RULES).read_text(encoding="utf-8")
+        llm = FakeLLM(
+            json.dumps(
+                {"target": "src/hpa/kb.py", "kind": "rule", "text": "x"},
+                ensure_ascii=False,
+            )
+        )
+        with self.assertRaises(growth.GrowthError):
+            growth.propose(self.cfg, llm, self._correction())
+        self.assertEqual(before, (self.root / growth.FITNESS_RULES).read_text(encoding="utf-8"))
+
+    def test_fitness_context_includes_profile_summary_not_note(self) -> None:
+        fitness.record_workout(
+            self.cfg,
+            {
+                "performed_on": fitness.local_today(),
+                "started_at": "18:00",
+                "note": "肩痛，别外传",
+                "exercises": [{"exercise": "squat", "sets": [{"weight_kg": 80, "reps": 5}] * 5}],
+            },
+        )
+        llm = FakeLLM(
+            json.dumps(
+                {"target": growth.FITNESS_RULES, "kind": "rule", "text": "保持重量"},
+                ensure_ascii=False,
+            )
+        )
+        growth.propose(self.cfg, llm, self._correction())
+        user = llm.calls[0]
+        self.assertIn("训练画像", user)
+        self.assertIn("最近 4 周训练摘要", user)
+        self.assertIn("上次建议", user)
+        self.assertIn('"days_per_week": 3', user)
+        self.assertNotIn("肩痛", user)
+
+    def test_run_fitness_rule_proposal_from_llm(self) -> None:
+        reply = json.dumps(
+            {
+                "target": growth.FITNESS_RULES,
+                "kind": "rule",
+                "text": "用户每周只能练两次，不要默认建议加重量。",
+                "why": "纠正原文",
+            },
+            ensure_ascii=False,
+        )
+        result = growth.run(self.cfg, FakeLLM(reply))
+        self.assertEqual(result.errors, [])
+        self.assertEqual(result.applied, 1)
+        text = (self.root / growth.FITNESS_RULES).read_text(encoding="utf-8")
+        self.assertIn("- 用户每周只能练两次", text)
+        self.assertIn("<!-- 来源：纠正 #1 -->", text)
+        self.assertEqual(growth.list_pending(self.cfg), [])
+
+    def test_profile_target_with_rule_kind_rejected(self) -> None:
+        llm = FakeLLM(
+            json.dumps(
+                {"target": growth.TRAINING_PROFILE, "kind": "rule", "text": "x"},
+                ensure_ascii=False,
+            )
+        )
+        with self.assertRaises(growth.GrowthError):
+            growth.propose(self.cfg, llm, self._correction())
+
+    def test_profile_apply_rejects_unknown_key_as_growth_error(self) -> None:
+        proposal = growth.Proposal(
+            target=growth.TRAINING_PROFILE,
+            kind="profile",
+            text="bogus=2",
+            key="bogus",
+            value="2",
+        )
+        with self.assertRaises(growth.GrowthError):
+            growth.apply_proposal(self.cfg, proposal, correction_id=1)
+        text = (self.root / growth.TRAINING_PROFILE).read_text(encoding="utf-8")
+        self.assertIn("每周可练：3", text)
 
 
 if __name__ == "__main__":

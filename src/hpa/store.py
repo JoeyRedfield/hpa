@@ -68,7 +68,8 @@ CREATE TABLE IF NOT EXISTS corrections (
     status     TEXT NOT NULL DEFAULT 'pending',
     applied_at TEXT,
     target     TEXT,
-    summary    TEXT
+    summary    TEXT,
+    scope      TEXT NOT NULL DEFAULT 'mail'
 );
 
 CREATE TABLE IF NOT EXISTS meta (
@@ -130,6 +131,7 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "applied_at": "TEXT",
         "target": "TEXT",
         "summary": "TEXT",
+        "scope": "TEXT NOT NULL DEFAULT 'mail'",
     },
     "todos": {
         "done_at": "TEXT",

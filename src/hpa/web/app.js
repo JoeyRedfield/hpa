@@ -604,7 +604,31 @@ async function generateAdvice() {
   }
 }
 
+async function submitCorrection() {
+  const input = $("#fx-correction");
+  const note = input.value.trim();
+  if (!note) {
+    toast("先写一句纠正");
+    return;
+  }
+  const button = $("#fx-correct");
+  button.disabled = true;
+  try {
+    await api("/api/fitness/correct", { note });
+    input.value = "";
+    toast("已记录，下次 growth run 固化");
+    await loadState();
+  } catch (e) {
+    toast(String(e.message || e), 5000);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function renderFitness(fitness) {
+  const pending = $("#fx-correction-pending");
+  const count = Number(fitness.pending_corrections || 0);
+  pending.textContent = count ? `待固化 ${count} 条` : "";
   fxCatalog = fitness.exercises || [];
   renderExerciseOptions();
   const date = $("#fx-date");
@@ -676,6 +700,7 @@ $("#fx-clear").addEventListener("click", clearWorkoutForm);
 $("#fx-exercise").addEventListener("change", syncWeightInput);
 $("#fx-weight-save").addEventListener("click", saveWeight);
 $("#fx-advice").addEventListener("click", generateAdvice);
+$("#fx-correct").addEventListener("click", submitCorrection);
 $("#fx-weight-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") saveWeight();
 });

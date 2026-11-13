@@ -278,3 +278,8 @@ footer { display: flex; align-items: center; gap: 0.8rem; padding: 0.5rem 1rem 1
 .fx-advice-action { margin: 0.35rem 0 0; font-size: 0.82rem; }
 .fx-insufficient { margin: 0.5rem 0 0; padding-left: 1.1rem; font-size: 0.78rem; color: var(--muted); }
 .fx-insufficient li { margin: 0.2rem 0; }
+
+.fx-correction { margin-top: 0.9rem; padding-top: 0.8rem; border-top: 1px dashed var(--line); }
+.fx-correction label { display: block; font-size: 0.8rem; margin-bottom: 0.35rem; }
+.fx-correction textarea { width: 100%; resize: vertical; min-height: 2.8rem; }
+.fx-correction-bar { display: flex; align-items: center; gap: 0.7rem; margin-top: 0.45rem; }

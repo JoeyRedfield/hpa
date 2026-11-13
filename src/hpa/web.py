@@ -87,7 +87,8 @@ def state_payload(cfg: Config) -> dict:
         corrections = [
             dict(row)
             for row in conn.execute(
-                "SELECT id, created_at, message_id, raw FROM corrections ORDER BY id DESC LIMIT 20"
+                "SELECT id, created_at, message_id, raw FROM corrections "
+                "WHERE COALESCE(scope, 'mail') = 'mail' ORDER BY id DESC LIMIT 20"
             )
         ]
         counts = {
@@ -346,6 +347,24 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:  # noqa: BLE001 - 无 key 时降级为本地规则
                 client = None
             return fitness.generate_advice(cfg, client)
+        if path == "/api/fitness/correct":
+            note = str(payload.get("note") or "").strip()
+            if not note:
+                raise ValueError("请先写一句纠正")
+            conn = store.connect(cfg)
+            try:
+                cur = conn.execute(
+                    "INSERT INTO corrections(created_at, message_id, raw, scope) VALUES (?, NULL, ?, 'fitness')",
+                    (store.utcnow(), note),
+                )
+                pending = conn.execute(
+                    "SELECT COUNT(*) FROM corrections "
+                    "WHERE COALESCE(scope, 'mail') = 'fitness' AND status = 'pending'"
+                ).fetchone()[0]
+                conn.commit()
+            finally:
+                conn.close()
+            return {"status": "recorded", "id": cur.lastrowid, "pending": int(pending)}
         if path == "/api/fitness/record":
             kind = str(payload.get("kind") or "workout")
             if kind == "workout":

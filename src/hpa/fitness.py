@@ -779,7 +779,7 @@ def _volume_candidate(stats: dict[str, dict], buckets: list[dict]) -> dict | Non
 
 
 def _stagnation_candidate(
-    stats: dict[str, dict], skip: set[str], buckets: list[dict]
+    stats: dict[str, dict], skip: set[str], buckets: list[dict], weekly_days: int | None
 ) -> dict | None:
     candidates: list[dict] = []
     for key, entry in stats.items():
@@ -810,7 +810,15 @@ def _stagnation_candidate(
                     f"{name} 最近 3 周最好一组 {_best_text(max(bests[1:4]), bodyweight)} 没有提升；"
                     f"{_series(name, volumes[1:], bodyweight, _span(buckets[1:]))}。"
                 ),
-                "action": f"下次{name}保持重量，把最后一组多做一次；连续两周仍无变化再考虑减量。",
+                "action": (
+                    f"下次{name}试着加重量（2.5kg）或把最后一组多做一次；连续两周仍无变化再考虑减量。"
+                    if weekly_days is not None and weekly_days > 2
+                    else (
+                        f"下次{name}保持重量，把最后一组多做一次；一周只练 {weekly_days} 次，先稳住恢复。"
+                        if weekly_days
+                        else f"下次{name}保持重量，把最后一组多做一次；先稳住动作与恢复。"
+                    )
+                ),
                 "workout_ids": ids,
                 "_score": 60 + min(20, sum(sessions) * 5),
                 "total": sum(volumes),
@@ -845,7 +853,7 @@ def _build_advice(workouts: list[dict], profile: dict, today: date) -> dict:
         if volume:
             items.append(volume)
             skip.add(volume["exercise"])
-        stagnation = _stagnation_candidate(stats, skip, buckets)
+        stagnation = _stagnation_candidate(stats, skip, buckets, profile.get("days_per_week"))
         if stagnation:
             items.append(stagnation)
 
@@ -891,6 +899,22 @@ def _last_advice(conn) -> dict | None:
         return json.loads(row["payload"])
     except (TypeError, ValueError):
         return None
+
+
+def growth_context(cfg: Config) -> dict:
+    """给成长循环的健身上下文：画像 + 4 周摘要 + 上次建议，不含备注。"""
+    today = date.fromisoformat(local_today())
+    conn = store.connect(cfg)
+    try:
+        workouts = _window_workouts(conn, today)
+        last_advice = _last_advice(conn)
+    finally:
+        conn.close()
+    return {
+        "profile": read_profile(cfg),
+        "summary": _training_summary(workouts, today),
+        "last_advice": last_advice,
+    }
 
 
 def _advice_rules(cfg: Config) -> str:
@@ -1037,6 +1061,10 @@ def state(cfg: Config) -> dict:
         recent = _recent_workouts(conn)
         weights = _recent_weights(conn)
         last_advice = _last_advice(conn)
+        pending = conn.execute(
+            "SELECT COUNT(*) FROM corrections "
+            "WHERE COALESCE(scope, 'mail') = 'fitness' AND status = 'pending'"
+        ).fetchone()[0]
     finally:
         conn.close()
     return {
@@ -1045,4 +1073,5 @@ def state(cfg: Config) -> dict:
         "weights": weights,
         "profile": read_profile(cfg),
         "last_advice": last_advice,
+        "pending_corrections": int(pending),
     }

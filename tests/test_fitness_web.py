@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from hpa import llm, store, web
+from hpa import growth, llm, store, web
 from hpa.config import Config
 
 TOKEN = "test-token"
@@ -566,6 +566,27 @@ class AdviceTest(AdviceCase):
         state = self._state()["fitness"]
         self.assertEqual(state["last_advice"]["generated_at"], advice["generated_at"])
 
+    def test_stagnation_without_profile_does_not_guess_add_weight(self) -> None:
+        for days_ago in (21, 14, 7, 0):
+            code, data = self._seed(days_ago, "squat", 80, 5, 5)
+            self.assertEqual(code, 200, data)
+        code, advice = self._advice()
+        self.assertEqual(code, 200, advice)
+        stagnation = next(item for item in advice["items"] if item["rule"] == "stagnation")
+        self.assertNotIn("加重量", stagnation["action"])
+        self.assertTrue(any("每周可练" in note for note in advice["insufficient"]))
+
+    def test_stagnation_with_two_days_keeps_weight(self) -> None:
+        self._profile(2)
+        for days_ago in (21, 14, 7, 0):
+            code, data = self._seed(days_ago, "squat", 80, 5, 5)
+            self.assertEqual(code, 200, data)
+        code, advice = self._advice()
+        self.assertEqual(code, 200, advice)
+        stagnation = next(item for item in advice["items"] if item["rule"] == "stagnation")
+        self.assertIn("保持重量", stagnation["action"])
+        self.assertNotIn("加重量", stagnation["action"])
+
     def test_one_workout_is_insufficient_not_invented(self) -> None:
         self._profile(3)
         self._seed(0, "squat", 80, 5, 5)
@@ -634,8 +655,6 @@ class AdviceTest(AdviceCase):
         self.assertNotIn("肩痛", json.dumps(advice, ensure_ascii=False))
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class AdviceRegressionTest(AdviceCase):
@@ -837,3 +856,69 @@ class WordingTest(AdviceCase):
         self.assertFalse(advice["llm_used"])
         self.assertEqual(advice["items"], baseline["items"])
         self.assertEqual(advice["insufficient"], baseline["insufficient"])
+
+
+class CorrectionTest(AdviceCase):
+    def setUp(self) -> None:
+        super().setUp()
+        prompts = self.root / "prompts"
+        prompts.mkdir(exist_ok=True)
+        source = Path(__file__).resolve().parents[1] / "prompts" / "fitness-growth.md"
+        (prompts / "fitness-growth.md").write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+
+    def test_fitness_correction_is_separate_and_pending(self) -> None:
+        code, data = self._post("/api/fitness/correct", {"note": "别每次都让我加重量"})
+        self.assertEqual(code, 200, data)
+        self.assertEqual(data["pending"], 1)
+        fitness = self._state()["fitness"]
+        self.assertEqual(fitness["pending_corrections"], 1)
+        self.assertEqual(self._state()["corrections"], [])
+        conn = store.connect(self.cfg)
+        try:
+            row = conn.execute("SELECT * FROM corrections WHERE id = ?", (data["id"],)).fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(row["scope"], "fitness")
+        self.assertIsNone(row["message_id"])
+        self.assertEqual(row["status"], "pending")
+
+    def test_growth_profile_correction_changes_advice_target(self) -> None:
+        self._profile(3)
+        for days_ago in (21, 14, 7, 0):
+            code, data = self._seed(days_ago, "squat", 80, 5, 5)
+            self.assertEqual(code, 200, data)
+        _, before = self._advice()
+        frequency = next(item for item in before["items"] if item["rule"] == "frequency")
+        self.assertIn("3 次/周", frequency["evidence"])
+        stagnation = next(item for item in before["items"] if item["rule"] == "stagnation")
+        self.assertIn("加重量", stagnation["action"])
+
+        code, correction = self._post("/api/fitness/correct", {"note": "别每次都让我加重量，我一周只能练两次"})
+        self.assertEqual(code, 200, correction)
+
+        reply = json.dumps(
+            {
+                "target": growth.TRAINING_PROFILE,
+                "kind": "profile",
+                "key": "weekly_days",
+                "value": "2",
+                "why": "用户一周只能练两次",
+            },
+            ensure_ascii=False,
+        )
+        result = growth.run(self.cfg, FakeLLM(reply))
+        self.assertEqual(result.errors, [])
+        self.assertEqual(result.applied, 1)
+
+        fitness = self._state()["fitness"]
+        self.assertEqual(fitness["profile"]["days_per_week"], 2)
+        self.assertEqual(fitness["pending_corrections"], 0)
+        _, after = self._advice()
+        frequency = next(item for item in after["items"] if item["rule"] == "frequency")
+        self.assertIn("2 次/周", frequency["evidence"])
+        for item in after["items"]:
+            self.assertNotIn("加重量", item["action"])
+
+
+if __name__ == "__main__":
+    unittest.main()
