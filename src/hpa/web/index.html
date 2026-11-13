@@ -82,6 +82,18 @@
           <input id="fx-sets" type="number" inputmode="numeric" placeholder="组数" min="1" max="20" value="5">
           <button id="fx-add" class="primary">添加动作</button>
         </div>
+        <div class="fx-extras">
+          <label class="fx-date">组间歇
+            <input id="fx-rest" type="text" inputmode="numeric" placeholder="如 90 或 60-90">
+          </label>
+          <label class="fx-date">递减组（可选）
+            <input id="fx-drops" type="text" placeholder="如 7.5x10, 2.5x10">
+          </label>
+          <label class="fx-check">
+            <input id="fx-warmup" type="checkbox">
+            热身组（不计入容量）
+          </label>
+        </div>
         <div id="fx-pending"></div>
         <label class="fx-note-label">备注（仅本机，不进模型）
           <textarea id="fx-note" maxlength="500" rows="2"></textarea>

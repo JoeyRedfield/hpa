@@ -22,6 +22,8 @@ MAX_WEIGHT_KG = 500
 MIN_BODY_WEIGHT_KG = 20
 MAX_BODY_WEIGHT_KG = 300
 MAX_NOTE = 500
+MAX_REST_SECONDS = 600
+MAX_SEGMENTS = 6
 PROFILE_KEYS = ("目标", "每周可练", "器械", "伤病")
 GOALS = ("力量", "增肌", "减脂", "维持", "未设定")
 MAX_PROFILE_TEXT = 80
@@ -37,6 +39,7 @@ EXERCISES: dict[str, tuple[str, str, bool]] = {
     "hanging_leg_raise": ("悬挂举腿", "core", True),
     "squat": ("深蹲", "legs", False),
     "deadlift": ("硬拉", "legs", False),
+    "lateral_raise": ("侧平举", "shoulders", False),
 }
 
 DEMO_PROFILE: dict[str, object] = {
@@ -116,24 +119,74 @@ def _body_weight(value) -> float:
     return weight
 
 
-def _sets(exercise: str, raw) -> list[tuple[int, float | None, int]]:
+def _rest_seconds(value, name: str) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{name} 的组间歇应为整数秒")
+    if isinstance(value, float) and not value.is_integer():
+        raise ValueError(f"{name} 的组间歇应为整数秒")
+    seconds = int(value)
+    if not 0 <= seconds <= MAX_REST_SECONDS:
+        raise ValueError(f"{name} 的组间歇应在 0–{MAX_REST_SECONDS} 秒")
+    return seconds
+
+
+def _rest_pair(item: dict, name: str) -> tuple[int | None, int | None]:
+    rest = _rest_seconds(item.get("rest_seconds"), name)
+    rest_max = _rest_seconds(item.get("rest_seconds_max"), name)
+    if rest_max is not None and rest is None:
+        raise ValueError(f"{name} 的组间歇要先填最短时间")
+    if rest is not None and rest_max is not None and rest_max < rest:
+        raise ValueError(f"{name} 的组间歇最长时间不能小于最短时间")
+    return rest, rest_max
+
+
+def _sets(
+    exercise: str,
+    raw,
+    rest_seconds: int | None = None,
+    rest_seconds_max: int | None = None,
+    warmup: bool = False,
+) -> list[dict]:
     name, _group, bodyweight = EXERCISES[exercise]
     if not isinstance(raw, list) or not raw:
         raise ValueError(f"{name} 至少记一组")
     if len(raw) > MAX_SETS:
         raise ValueError(f"{name} 一次最多 {MAX_SETS} 组")
-    rows: list[tuple[int, float | None, int]] = []
-    for item in raw:
+    rows: list[dict] = []
+    for set_index, item in enumerate(raw, 1):
         if not isinstance(item, dict):
             raise ValueError(f"{name} 的组数据格式不对")
-        reps = _reps(item.get("reps"), name)
-        if bodyweight:
-            weight = None
-        else:
-            if item.get("weight_kg") is None:
-                raise ValueError(f"{name} 需要填重量")
-            weight = _weight(item["weight_kg"], name)
-        rows.append((len(rows) + 1, weight, reps))
+        set_warmup = item.get("warmup", warmup) is True
+        segments = item.get("segments")
+        if segments is None:
+            segments = [item]
+        if not isinstance(segments, list) or not segments:
+            raise ValueError(f"{name} 的组内至少有一段")
+        if len(segments) > MAX_SEGMENTS:
+            raise ValueError(f"{name} 一组最多 {MAX_SEGMENTS} 段")
+        for drop_index, segment in enumerate(segments):
+            if not isinstance(segment, dict):
+                raise ValueError(f"{name} 的递减段格式不对")
+            reps = _reps(segment.get("reps"), name)
+            if bodyweight:
+                weight = None
+            else:
+                if segment.get("weight_kg") is None:
+                    raise ValueError(f"{name} 需要填重量")
+                weight = _weight(segment["weight_kg"], name)
+            rows.append(
+                {
+                    "set_index": set_index,
+                    "drop_index": drop_index,
+                    "weight_kg": weight,
+                    "reps": reps,
+                    "rest_seconds": rest_seconds,
+                    "rest_seconds_max": rest_seconds_max,
+                    "warmup": set_warmup,
+                }
+            )
     return rows
 
 
@@ -144,7 +197,7 @@ def _exercise_payload(exercise: str, raw_sets: list[dict]) -> dict:
         "exercise": exercise,
         "name": name,
         "bodyweight": bodyweight,
-        "sets": [{"weight_kg": weight, "reps": reps} for _index, weight, reps in rows],
+        "sets": [{"weight_kg": row["weight_kg"], "reps": row["reps"]} for row in rows],
     }
 
 
@@ -157,6 +210,7 @@ _ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("pull_up", ("引体向上", "引体")),
     ("deadlift", ("硬拉",)),
     ("squat", ("深蹲",)),
+    ("lateral_raise", ("侧平举", "侧平", "侧举")),
 )
 _WEIGHT_UNIT_RE = r"(\d+(?:\.\d+)?)\s*(?:kg|KG|公斤|千克)"
 _SETS_REPS_RE = r"(\d+)\s*组\s*[x×*]?\s*(\d+)\s*次"
@@ -289,14 +343,28 @@ def record_workout(cfg: Config, payload: dict) -> dict:
     if not isinstance(raw_exercises, list) or not raw_exercises:
         raise ValueError("至少记一个动作")
 
-    normalized: list[tuple[str, list[tuple[int, float | None, int]]]] = []
+    normalized: list[tuple[str, list[dict]]] = []
+    set_offsets: dict[str, int] = {}
     for item in raw_exercises:
         if not isinstance(item, dict):
             raise ValueError("动作数据格式不对")
         exercise = str(item.get("exercise") or "")
         if exercise not in EXERCISES:
             raise ValueError(f"未知动作：{exercise}")
-        normalized.append((exercise, _sets(exercise, item.get("sets"))))
+        name = EXERCISES[exercise][0]
+        rest, rest_max = _rest_pair(item, name)
+        rows = _sets(
+            exercise,
+            item.get("sets"),
+            rest_seconds=rest,
+            rest_seconds_max=rest_max,
+            warmup=item.get("warmup") is True,
+        )
+        offset = set_offsets.get(exercise, 0)
+        for row in rows:
+            row["set_index"] += offset
+        set_offsets[exercise] = max(row["set_index"] for row in rows)
+        normalized.append((exercise, rows))
 
     conn = store.connect(cfg)
     try:
@@ -307,9 +375,23 @@ def record_workout(cfg: Config, payload: dict) -> dict:
         workout_id = cur.lastrowid
         for exercise, rows in normalized:
             conn.executemany(
-                "INSERT INTO workout_sets(workout_id, exercise, set_index, weight_kg, reps) "
-                "VALUES (?, ?, ?, ?, ?)",
-                [(workout_id, exercise, index, weight, reps) for index, weight, reps in rows],
+                "INSERT INTO workout_sets(workout_id, exercise, set_index, drop_index, "
+                "weight_kg, reps, rest_seconds, rest_seconds_max, warmup) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        workout_id,
+                        exercise,
+                        row["set_index"],
+                        row["drop_index"],
+                        row["weight_kg"],
+                        row["reps"],
+                        row["rest_seconds"],
+                        row["rest_seconds_max"],
+                        int(row["warmup"]),
+                    )
+                    for row in rows
+                ],
             )
         conn.commit()
     finally:
@@ -465,31 +547,42 @@ def _recent_workouts(conn, limit: int = 20) -> list[dict]:
     result: list[dict] = []
     for workout in workouts:
         rows = conn.execute(
-            "SELECT exercise, set_index, weight_kg, reps FROM workout_sets "
-            "WHERE workout_id = ? ORDER BY set_index",
+            "SELECT exercise, set_index, drop_index, weight_kg, reps, "
+            "rest_seconds, rest_seconds_max, warmup FROM workout_sets "
+            "WHERE workout_id = ? ORDER BY set_index, drop_index",
             (workout["id"],),
         ).fetchall()
         grouped: dict[str, list[dict]] = {}
         for row in rows:
             grouped.setdefault(row["exercise"], []).append(
-                {"set_index": row["set_index"], "weight_kg": row["weight_kg"], "reps": row["reps"]}
+                {
+                    "set_index": row["set_index"],
+                    "drop_index": row["drop_index"],
+                    "weight_kg": row["weight_kg"],
+                    "reps": row["reps"],
+                    "rest_seconds": row["rest_seconds"],
+                    "rest_seconds_max": row["rest_seconds_max"],
+                    "warmup": bool(row["warmup"]),
+                }
             )
         exercises = []
         for exercise, (_name, _group, bodyweight) in EXERCISES.items():
             if exercise not in grouped:
                 continue
             sets = grouped[exercise]
+            working = [item for item in sets if not item["warmup"]]
             if bodyweight:
-                volume = sum(item["reps"] for item in sets)
+                volume = sum(item["reps"] for item in working)
                 volume_kind = "reps"
             else:
-                volume = sum((item["weight_kg"] or 0) * item["reps"] for item in sets)
+                volume = sum((item["weight_kg"] or 0) * item["reps"] for item in working)
                 volume_kind = "kg"
             exercises.append(
                 {
                     "exercise": exercise,
                     "name": EXERCISES[exercise][0],
                     "sets": sets,
+                    "set_count": len({item["set_index"] for item in sets}),
                     "volume": round(volume, 2),
                     "volume_kind": volume_kind,
                 }
@@ -646,7 +739,7 @@ def _recent_weights(conn, limit: int = 30) -> list[dict]:
     ]
 
 
-PART_NAMES = {"chest": "胸", "back": "背", "biceps": "二头", "legs": "腿", "core": "核心"}
+PART_NAMES = {"chest": "胸", "back": "背", "biceps": "二头", "legs": "腿", "core": "核心", "shoulders": "肩"}
 _PART_ORDER = tuple(dict.fromkeys(spec[1] for spec in EXERCISES.values()))
 _RULE_ORDER = {"frequency": 0, "volume": 1, "stagnation": 2}
 
@@ -728,7 +821,7 @@ def _window_workouts(conn, today: date) -> list[dict]:
             continue
         sets = conn.execute(
             "SELECT exercise, weight_kg, reps FROM workout_sets "
-            "WHERE workout_id = ? ORDER BY set_index",
+            "WHERE workout_id = ? AND warmup = 0 ORDER BY set_index, drop_index",
             (row["id"],),
         ).fetchall()
         grouped: dict[str, list[tuple[float | None, int]]] = {}

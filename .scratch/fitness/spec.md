@@ -58,13 +58,13 @@ Status: ready-for-agent
 
 ### 领域模型与数据
 
-- **动作**：固定 7 个，存稳定英文 ID，UI 显示中文名。部位映射固定：平板卧推/窄距卧推→胸，引体向上→背，二头弯举→二头，深蹲/硬拉→腿，悬挂举腿→核心。
-- **组**：一行一组，存 `exercise + set_index + weight_kg + reps`。输入「80×5×5」展开为 5 行同重量同次数；展开后可逐组改。自重动作 `weight_kg` 为空。
+- **动作**：固定 8 个，存稳定英文 ID，UI 显示中文名。部位映射固定：平板卧推/窄距卧推→胸，引体向上→背，二头弯举→二头，深蹲/硬拉→腿，悬挂举腿→核心，侧平举→肩。
+- **组**：一行一组（一组内每个递减段一行），存 `exercise + set_index + drop_index + weight_kg + reps + rest_seconds + rest_seconds_max + warmup`。输入「80×5×5」展开为 5 行同重量同次数；展开后可逐组改。自重动作 `weight_kg` 为空。一组最多 6 段递减；热身组 `warmup=1`，不计容量也不进建议统计；组间歇可记单值或区间。
 - **容量**：某动作 Σ（重量×次数）；自重动作以总次数计，不参与吨位比较。
 - **体重**：一天一条，以本地日期唯一，重复提交覆盖当天。只作背景趋势，不单独出建议。
 - **训练画像**：单一真相是 `memory/training-profile.md`，文件头固定四行键值（目标 / 每周可练 / 器械 / 伤病），其余自由文字保留。UI 只改这四行；解析缺字段或失败时画像标记为不完整，建议里明说缺什么。目标取值：力量 / 增肌 / 减脂 / 维持 / 未设定；每周可练：1–7 的整数。
 - **时间**：所有周窗口按本地时区（Asia/Shanghai）的日期划分；存 `performed_on`（YYYY-MM-DD）用于归桶，另存开始时间用于显示。
-- **表**：`workouts`（id、performed_on、started_at、note、is_demo、created_at）、`workout_sets`（id、workout_id、exercise、set_index、weight_kg、reps）、`weight_logs`（id、logged_on、weight_kg、is_demo）、`advice_runs`（id、created_at、payload JSON、llm_used）。`corrections` 加 `scope`（`mail` / `fitness`，默认 `mail`），健身纠正的 `message_id` 为空。
+- **表**：`workouts`（id、performed_on、started_at、note、is_demo、created_at）、`workout_sets`（id、workout_id、exercise、set_index、drop_index、weight_kg、reps、rest_seconds、rest_seconds_max、warmup）、`weight_logs`（id、logged_on、weight_kg、is_demo）、`advice_runs`（id、created_at、payload JSON、llm_used）。`corrections` 加 `scope`（`mail` / `fitness`，默认 `mail`），健身纠正的 `message_id` 为空。
 - **迁移**：启动时建新表；`corrections` 用 `ALTER TABLE ... ADD COLUMN` 补 `scope`，旧行按 `mail` 处理。
 - **删除**：训练物理删除并级联删组；UI 二次确认，服务端要求请求体带 `confirm: true`，否则拒绝。体重不单独删，覆盖即可。
 - **保留**：建议运行保留最近 20 条，超出不显示但可清理。
@@ -80,7 +80,7 @@ Status: ready-for-agent
 | `POST /api/fitness/correct` | `{note}` → 写 `corrections`（scope=fitness），返回「已记录，等固化」 |
 | `POST /api/fitness/workouts/<id>/delete` | `{confirm: true}`；删除一次训练及其组 |
 
-- 校验：动作必须在 7 个之内；重量 0–500 kg（自重为空）；次数 1–100；组数 1–20；日期不得晚于今天；备注长度上限（如 500 字）；快捷输入上限 300 字。
+- 校验：动作必须在 8 个之内；重量 0–500 kg（自重为空）；次数 1–100；组数 1–20；日期不得晚于今天；备注长度上限（如 500 字）；快捷输入上限 300 字。
 - 写接口一律要求 token（复用现有校验）；`GET /api/state` 同现有规则。
 
 ### 建议引擎

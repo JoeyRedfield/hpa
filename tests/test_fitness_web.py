@@ -176,6 +176,76 @@ class RecordWorkoutTest(FitnessWebCase):
         self.assertIn("不能晚于今天", data["error"])
         self.assertEqual(self._state()["fitness"]["recent_workouts"], [])
 
+    def test_rest_range_warmup_and_drop_sets(self) -> None:
+        code, data = self._record(
+            [
+                {
+                    "exercise": "bench_press",
+                    "rest_seconds": 60,
+                    "rest_seconds_max": 90,
+                    "sets": [
+                        {"weight_kg": 20, "reps": 10, "warmup": True},
+                        *[{"weight_kg": 65, "reps": 8}] * 5,
+                    ],
+                },
+                {
+                    "exercise": "lateral_raise",
+                    "rest_seconds": 120,
+                    "sets": [
+                        {"segments": [
+                            {"weight_kg": 12.5, "reps": 8},
+                            {"weight_kg": 7.5, "reps": 10},
+                            {"weight_kg": 2.5, "reps": 10},
+                        ]}
+                    ] * 3,
+                },
+            ]
+        )
+        self.assertEqual(code, 200, data)
+        workout = self._state()["fitness"]["recent_workouts"][0]
+        by_exercise = {item["exercise"]: item for item in workout["exercises"]}
+        bench = by_exercise["bench_press"]
+        self.assertEqual(bench["set_count"], 6)
+        self.assertEqual(bench["volume"], 2600)  # 热身不计入
+        self.assertEqual([s["warmup"] for s in bench["sets"]].count(True), 1)
+        self.assertEqual(bench["sets"][0]["rest_seconds"], 60)
+        self.assertEqual(bench["sets"][0]["rest_seconds_max"], 90)
+        lateral = by_exercise["lateral_raise"]
+        self.assertEqual(lateral["name"], "侧平举")
+        self.assertEqual(lateral["set_count"], 3)
+        self.assertEqual(lateral["volume"], 600)
+        self.assertEqual([s["drop_index"] for s in lateral["sets"][:3]], [0, 1, 2])
+        self.assertEqual([s["weight_kg"] for s in lateral["sets"][:3]], [12.5, 7.5, 2.5])
+
+    def test_same_exercise_entries_continue_set_numbers(self) -> None:
+        code, data = self._record(
+            [
+                {"exercise": "bench_press", "warmup": True, "sets": [{"weight_kg": 20, "reps": 10}]},
+                {"exercise": "bench_press", "sets": [{"weight_kg": 65, "reps": 8}] * 2},
+            ]
+        )
+        self.assertEqual(code, 200, data)
+        bench = self._state()["fitness"]["recent_workouts"][0]["exercises"][0]
+        self.assertEqual([item["set_index"] for item in bench["sets"]], [1, 2, 3])
+        self.assertEqual([item["warmup"] for item in bench["sets"]], [True, False, False])
+
+    def test_rejects_rest_max_below_min(self) -> None:
+        code, data = self._post(
+            "/api/fitness/record",
+            {
+                "kind": "workout",
+                "performed_on": _today(),
+                "exercises": [{
+                    "exercise": "squat",
+                    "rest_seconds": 90,
+                    "rest_seconds_max": 60,
+                    "sets": [{"weight_kg": 80, "reps": 5}],
+                }],
+            },
+        )
+        self.assertEqual(code, 400)
+        self.assertIn("组间歇", data["error"])
+
     def test_delete_requires_confirm_and_removes_sets(self) -> None:
         code, data = self._record(
             [{"exercise": "squat", "sets": [{"weight_kg": 80, "reps": 5}] * 5}]

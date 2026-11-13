@@ -8,6 +8,7 @@
 - hanging_leg_raise 悬挂举腿（核心，自重）
 - squat 深蹲（腿，需要重量）
 - deadlift 硬拉（腿，需要重量）
+- lateral_raise 侧平举（肩，需要重量）
 
 规则：
 - 每个动作输出 `sets` 数组，一组一项，按顺序；每项 `{"weight_kg": 数字, "reps": 整数}`。

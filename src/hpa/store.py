@@ -88,12 +88,16 @@ CREATE TABLE IF NOT EXISTS workouts (
 CREATE INDEX IF NOT EXISTS idx_workouts_performed ON workouts(performed_on);
 
 CREATE TABLE IF NOT EXISTS workout_sets (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    workout_id INTEGER NOT NULL,
-    exercise   TEXT NOT NULL,
-    set_index  INTEGER NOT NULL,
-    weight_kg  REAL,
-    reps       INTEGER NOT NULL
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    workout_id       INTEGER NOT NULL,
+    exercise         TEXT NOT NULL,
+    set_index        INTEGER NOT NULL,
+    drop_index       INTEGER NOT NULL DEFAULT 0,
+    weight_kg        REAL,
+    reps             INTEGER NOT NULL,
+    rest_seconds     INTEGER,
+    rest_seconds_max INTEGER,
+    warmup           INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_workout_sets_workout ON workout_sets(workout_id);
 
@@ -135,6 +139,12 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     },
     "todos": {
         "done_at": "TEXT",
+    },
+    "workout_sets": {
+        "drop_index": "INTEGER NOT NULL DEFAULT 0",
+        "rest_seconds": "INTEGER",
+        "rest_seconds_max": "INTEGER",
+        "warmup": "INTEGER NOT NULL DEFAULT 0",
     },
 }
 

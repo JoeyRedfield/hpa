@@ -214,6 +214,37 @@ function fmtSet(set, bodyweight) {
   return bodyweight ? `${set.reps} 次` : `${set.weight_kg}×${set.reps}`;
 }
 
+function parseRest(value) {
+  const text = String(value || "").trim();
+  if (!text) return { min: null, max: null };
+  const match = text.match(/^(\d+)(?:\s*[-~–—至]\s*(\d+))?\s*(?:秒|s)?$/i);
+  if (!match) throw new Error("组间歇写成 90 或 60-90");
+  const min = Number(match[1]);
+  const max = match[2] === undefined ? null : Number(match[2]);
+  if (min > 600 || (max !== null && max > 600)) throw new Error("组间歇应在 0–600 秒");
+  if (max !== null && max < min) throw new Error("组间歇最长时间不能小于最短时间");
+  return { min, max };
+}
+
+function parseDrops(value) {
+  const text = String(value || "").trim();
+  if (!text) return [];
+  return text.split(/[,，+]/).map((part) => part.trim()).filter(Boolean).map((part) => {
+    const match = part.match(/^(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+)$/i);
+    if (!match) throw new Error("递减组写成 7.5x10, 2.5x10");
+    const weight = Number(match[1]);
+    const reps = Number(match[2]);
+    if (!(weight >= 0 && weight <= 500)) throw new Error("递减组重量应在 0–500 kg");
+    if (!Number.isInteger(reps) || reps < 1 || reps > 100) throw new Error("递减组次数应在 1–100");
+    return { weight, reps };
+  });
+}
+
+function restText(min, max) {
+  if (min === null || min === undefined) return "";
+  return max !== null && max !== undefined && max !== min ? `休息 ${min}–${max}s` : `休息 ${min}s`;
+}
+
 function setTab(name, persist = true) {
   const tab = name === "fitness" ? "fitness" : "mail";
   $("#tab-mail").hidden = tab !== "mail";
@@ -252,30 +283,42 @@ function renderPending() {
   box.innerHTML = fxPending
     .map((ex, i) => {
       const kind = ex.bodyweight ? "reps" : "kg";
-      const volume = ex.sets.reduce(
-        (sum, set) => sum + (ex.bodyweight
-          ? Number(set.reps || 0)
-          : Number(set.weight || 0) * Number(set.reps || 0)),
-        0,
-      );
+      const volume = ex.warmup
+        ? 0
+        : ex.sets.reduce(
+          (sum, set) => sum + set.segments.reduce(
+            (part, seg) => part + (ex.bodyweight
+              ? Number(seg.reps || 0)
+              : Number(seg.weight || 0) * Number(seg.reps || 0)),
+            0,
+          ),
+          0,
+        );
       const rows = ex.sets
-        .map((set, j) => {
-          const weightInput = ex.bodyweight
-            ? ""
-            : `<input type="number" data-ex="${i}" data-set="${j}" data-field="weight" value="${set.weight ?? ""}" min="0" max="500" step="0.5" inputmode="decimal" aria-label="第 ${j + 1} 组重量"><span class="fx-unit">kg</span>`;
-          return `<div class="fx-set">
-            <span class="fx-set-no">${j + 1}</span>
-            ${weightInput}
-            ${ex.bodyweight ? "" : '<span class="fx-x">×</span>'}
-            <input type="number" data-ex="${i}" data-set="${j}" data-field="reps" value="${set.reps}" min="1" max="100" inputmode="numeric" aria-label="第 ${j + 1} 组次数">
-            <span class="muted">次</span>
-          </div>`;
-        })
+        .map((set, j) => set.segments
+          .map((seg, k) => {
+            const where = `第 ${j + 1} 组${set.segments.length > 1 ? `第 ${k + 1} 段` : ""}`;
+            const weightInput = ex.bodyweight
+              ? ""
+              : `<input type="number" data-ex="${i}" data-set="${j}" data-seg="${k}" data-field="weight" value="${seg.weight ?? ""}" min="0" max="500" step="0.5" inputmode="decimal" aria-label="${where}重量"><span class="fx-unit">kg</span>`;
+            return `<div class="fx-set${k > 0 ? " fx-drop" : ""}">
+              <span class="fx-set-no">${k === 0 ? j + 1 : "↳"}</span>
+              ${weightInput}
+              ${ex.bodyweight ? "" : '<span class="fx-x">×</span>'}
+              <input type="number" data-ex="${i}" data-set="${j}" data-seg="${k}" data-field="reps" value="${seg.reps}" min="1" max="100" inputmode="numeric" aria-label="${where}次数">
+              <span class="muted">次</span>
+            </div>`;
+          })
+          .join(""))
         .join("");
+      const tags = [];
+      if (ex.warmup) tags.push("热身");
+      const rest = restText(ex.restSeconds, ex.restSecondsMax);
+      if (rest) tags.push(rest);
       return `<article class="fx-item">
         <div class="fx-item-head">
           <strong>${esc(ex.name)}</strong>
-          <span class="fx-summary muted">${ex.sets.length} 组 · ${fmtVolume(volume, kind)}</span>
+          <span class="fx-summary muted">${ex.sets.length} 组${tags.length ? ` · ${tags.join(" · ")}` : ""} · ${fmtVolume(Math.round(volume), kind)}</span>
           <button class="secondary" data-remove="${i}" title="只从这次未保存的记录里移除">移除动作</button>
         </div>
         ${rows}
@@ -296,15 +339,36 @@ function addExercise() {
     toast("重量应在 0–500 kg");
     return;
   }
+  let rest;
+  let drops;
+  try {
+    rest = parseRest($("#fx-rest").value);
+    drops = parseDrops($("#fx-drops").value);
+  } catch (e) {
+    toast(e.message);
+    return;
+  }
+  if (ex.bodyweight && drops.length) {
+    toast("自重动作不用填递减组");
+    return;
+  }
+  const segments = [{ weight: ex.bodyweight ? null : weight, reps }, ...drops];
   fxPending.push({
     exercise: ex.id,
     name: ex.name,
     bodyweight: ex.bodyweight,
-    sets: Array.from({ length: sets }, () => ({ weight: ex.bodyweight ? null : weight, reps })),
+    restSeconds: rest.min,
+    restSecondsMax: rest.max,
+    warmup: $("#fx-warmup").checked,
+    sets: Array.from({ length: sets }, () => ({
+      segments: segments.map((seg) => ({ ...seg })),
+    })),
   });
   renderPending();
   $("#fx-reps").value = "";
   $("#fx-weight").value = "";
+  $("#fx-drops").value = "";
+  $("#fx-warmup").checked = false;
 }
 
 async function parseQuick() {
@@ -334,7 +398,12 @@ async function parseQuick() {
     exercise: ex.exercise,
     name: ex.name,
     bodyweight: !!ex.bodyweight,
-    sets: (ex.sets || []).map((set) => ({ weight: set.weight_kg, reps: set.reps })),
+    restSeconds: null,
+    restSecondsMax: null,
+    warmup: false,
+    sets: (ex.sets || []).map((set) => ({
+      segments: [{ weight: set.weight_kg, reps: set.reps }],
+    })),
   }));
   renderPending();
   const uncertain = data.uncertain || [];
@@ -350,31 +419,41 @@ function clearWorkoutForm() {
   $("#fx-quick-hint").hidden = true;
   $("#fx-note").value = "";
   $("#fx-time").value = shanghaiNow().time;
+  $("#fx-rest").value = "";
+  $("#fx-drops").value = "";
+  $("#fx-warmup").checked = false;
 }
 
 async function saveWorkout() {
   if (!fxPending.length) { toast("先添加至少一个动作"); return; }
   for (const ex of fxPending) {
     for (const set of ex.sets) {
-      const reps = Number(set.reps);
-      if (!Number.isInteger(reps) || reps < 1 || reps > 100) {
-        toast(`${ex.name} 的次数应在 1–100`);
-        return;
-      }
-      if (!ex.bodyweight) {
-        const weight = Number(set.weight);
-        if (set.weight === null || set.weight === "" || !Number.isFinite(weight) || weight < 0 || weight > 500) {
-          toast(`${ex.name} 的重量应在 0–500 kg`);
+      for (const seg of set.segments) {
+        const reps = Number(seg.reps);
+        if (!Number.isInteger(reps) || reps < 1 || reps > 100) {
+          toast(`${ex.name} 的次数应在 1–100`);
           return;
+        }
+        if (!ex.bodyweight) {
+          const weight = Number(seg.weight);
+          if (seg.weight === null || seg.weight === "" || !Number.isFinite(weight) || weight < 0 || weight > 500) {
+            toast(`${ex.name} 的重量应在 0–500 kg`);
+            return;
+          }
         }
       }
     }
   }
   const exercises = fxPending.map((ex) => ({
     exercise: ex.exercise,
-    sets: ex.sets.map((set) => (ex.bodyweight
-      ? { reps: Number(set.reps) }
-      : { weight_kg: Number(set.weight), reps: Number(set.reps) })),
+    rest_seconds: ex.restSeconds,
+    rest_seconds_max: ex.restSecondsMax,
+    warmup: ex.warmup === true,
+    sets: ex.sets.map((set) => ({
+      segments: set.segments.map((seg) => (ex.bodyweight
+        ? { reps: Number(seg.reps) }
+        : { weight_kg: Number(seg.weight), reps: Number(seg.reps) })),
+    })),
   }));
   const btn = $("#fx-save");
   btn.disabled = true;
@@ -412,11 +491,30 @@ function renderRecent(workouts) {
   $("#fitness-recent").innerHTML = workouts
     .map((workout) => {
       const exercises = workout.exercises
-        .map((ex) => `<div class="fx-recent-ex">
+        .map((ex) => {
+          const groups = new Map();
+          for (const set of ex.sets) {
+            if (!groups.has(set.set_index)) groups.set(set.set_index, []);
+            groups.get(set.set_index).push(set);
+          }
+          const bodyweight = ex.volume_kind === "reps";
+          const rows = [...groups.values()]
+            .map((segs) => {
+              const first = segs[0];
+              const body = segs.map((seg) => fmtSet(seg, bodyweight)).join(" + ");
+              const rest = restText(first.rest_seconds, first.rest_seconds_max);
+              const label = first.warmup ? "热身" : `第 ${first.set_index} 组`;
+              return `<div class="fx-recent-sets">${label}：${body}${rest ? ` · ${rest}` : ""}</div>`;
+            })
+            .join("");
+          const hasWarmup = ex.sets.some((set) => set.warmup);
+          const count = ex.set_count || groups.size;
+          return `<div class="fx-recent-ex">
           <strong>${esc(ex.name)}</strong>
-          <span class="muted">${ex.sets.length} 组 · ${fmtVolume(ex.volume, ex.volume_kind)}</span>
-          <div class="fx-recent-sets">${ex.sets.map((set) => fmtSet(set, ex.volume_kind === "reps")).map(esc).join(" · ")}</div>
-        </div>`)
+          <span class="muted">${count} 组${hasWarmup ? "（含热身）" : ""} · ${fmtVolume(ex.volume, ex.volume_kind)}</span>
+          ${rows}
+        </div>`;
+        })
         .join("");
       const note = workout.note ? `<div class="fx-recent-note">备注（仅本机）：${esc(workout.note)}</div>` : "";
       const when = workout.started_at ? `${workout.performed_on} ${workout.started_at}` : workout.performed_on;
@@ -732,9 +830,10 @@ $("#fx-pending").addEventListener("input", (e) => {
   if (!el.dataset.field) return;
   const ex = fxPending[Number(el.dataset.ex)];
   const set = ex && ex.sets[Number(el.dataset.set)];
-  if (!set) return;
-  if (el.dataset.field === "weight") set.weight = el.value === "" ? null : Number(el.value);
-  else set.reps = el.value === "" ? 0 : Number(el.value);
+  const seg = set && set.segments[Number(el.dataset.seg)];
+  if (!seg) return;
+  if (el.dataset.field === "weight") seg.weight = el.value === "" ? null : Number(el.value);
+  else seg.reps = el.value === "" ? 0 : Number(el.value);
 });
 $("#fx-pending").addEventListener("click", (e) => {
   const remove = e.target.closest("[data-remove]");
