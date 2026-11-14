@@ -175,6 +175,7 @@ function renderCorrections(rows) {
 const TAB_KEY = "hpa:tab";
 let fxCatalog = [];
 let fxPending = [];
+let showAllRecent = false;
 let profileDirty = false;
 
 function shanghaiNow() {
@@ -489,7 +490,8 @@ async function deleteWorkout(id) {
 
 function renderRecent(workouts) {
   $("#fitness-recent-empty").hidden = workouts.length > 0;
-  $("#fitness-recent").innerHTML = workouts
+  const visible = showAllRecent ? workouts : workouts.slice(0, 6);
+  const cards = visible
     .map((workout) => {
       const exercises = workout.exercises
         .map((ex) => {
@@ -519,13 +521,22 @@ function renderRecent(workouts) {
         .join("");
       const note = workout.note ? `<div class="fx-recent-note">备注（仅本机）：${esc(workout.note)}</div>` : "";
       const when = workout.started_at ? `${workout.performed_on} ${workout.started_at}` : workout.performed_on;
-      return `<article class="card">
-        <div class="meta">${esc(when)}</div>
-        ${exercises}${note}
-        <div class="actions"><button class="danger" data-delete="${workout.id}">删除这次训练</button></div>
-      </article>`;
+      return `<details class="card fx-recent-card">
+        <summary>
+          <span class="meta">${esc(when)}</span>
+          <span class="muted">${workout.exercises.length} 个动作</span>
+        </summary>
+        <div class="fx-recent-body">
+          ${exercises}${note}
+          <div class="actions"><button class="danger" data-delete="${workout.id}">删除这次训练</button></div>
+        </div>
+      </details>`;
     })
     .join("");
+  const more = workouts.length > visible.length
+    ? `<button class="secondary" id="fx-recent-more" type="button">显示更早（${workouts.length - visible.length}）</button>`
+    : "";
+  $("#fitness-recent").innerHTML = cards + more;
 }
 
 function renderWeights(weights) {
@@ -854,6 +865,12 @@ $("#fx-pending").addEventListener("click", (e) => {
   renderPending();
 });
 $("#fitness-recent").addEventListener("click", (e) => {
+  const more = e.target.closest("#fx-recent-more");
+  if (more) {
+    showAllRecent = true;
+    loadState();
+    return;
+  }
   const btn = e.target.closest("[data-delete]");
   if (btn) deleteWorkout(Number(btn.dataset.delete));
 });
