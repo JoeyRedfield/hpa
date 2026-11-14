@@ -17,10 +17,13 @@ state/
 *.session.json
 *.log
 
-# 个人资料库默认不入库，避免误推到公开仓库
-# memory/
+# 个人资料库（偏好/画像）默认不入库，避免误推到公开仓库
+memory/
 
 # uv 缓存（本地自忽略，这里显式声明）
 .uv-cache/
 .cache/
 outbox/
+
+# 课程原文只在本地保留，公开仓库不收录
+docs/lab1.md
