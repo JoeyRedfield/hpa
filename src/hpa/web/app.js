@@ -307,6 +307,7 @@ function renderPending() {
               ${ex.bodyweight ? "" : '<span class="fx-x">×</span>'}
               <input type="number" data-ex="${i}" data-set="${j}" data-seg="${k}" data-field="reps" value="${seg.reps}" min="1" max="100" inputmode="numeric" aria-label="${where}次数">
               <span class="muted">次</span>
+              ${k === 0 ? `<button type="button" class="fx-set-del" data-ex="${i}" data-remove-set="${j}" aria-label="删除第 ${j + 1} 组" title="删除这一组">×</button>` : ""}
             </div>`;
           })
           .join(""))
@@ -836,6 +837,17 @@ $("#fx-pending").addEventListener("input", (e) => {
   else seg.reps = el.value === "" ? 0 : Number(el.value);
 });
 $("#fx-pending").addEventListener("click", (e) => {
+  const delSet = e.target.closest("[data-remove-set]");
+  if (delSet) {
+    const exIndex = Number(delSet.dataset.ex);
+    const setIndex = Number(delSet.dataset.removeSet);
+    const ex = fxPending[exIndex];
+    if (!ex) return;
+    ex.sets.splice(setIndex, 1);
+    if (!ex.sets.length) fxPending.splice(exIndex, 1);
+    renderPending();
+    return;
+  }
   const remove = e.target.closest("[data-remove]");
   if (!remove) return;
   fxPending.splice(Number(remove.dataset.remove), 1);
